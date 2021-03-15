@@ -13,7 +13,7 @@
 				<select
 					:id="item.full_key"
 					ref="control"
-					class="tw-border-top-left-radius-medium tw-border-top-right-radius-medium tw-font-size-6 tw-select tw-pd-l-1 tw-pd-r-3 tw-pd-y-05"
+					class="tw-border-top-left-radius-medium tw-border-top-right-radius-medium tw-font-size-6 ffz-select tw-pd-l-1 tw-pd-r-3 tw-pd-y-05"
 					@change="onChange"
 				>
 					<option
@@ -31,7 +31,7 @@
 					ref="text"
 					:value="value"
 					:disabled="! isCustom"
-					class="ffz-mg-t-1p tw-border-bottom-left-radius-medium tw-border-bottom-right-radius-medium tw-font-size-6 tw-pd-x-1 tw-pd-y-05 tw-input"
+					class="ffz-mg-t-1p tw-border-bottom-left-radius-medium tw-border-bottom-right-radius-medium tw-font-size-6 tw-pd-x-1 tw-pd-y-05 ffz-input"
 					@change="onTextChange"
 				>
 			</div>
@@ -54,7 +54,7 @@
 				</span>
 			</button>
 
-			<button v-if="has_value" class="tw-mg-l-05 tw-mg-y-05 tw-button tw-button--text tw-tooltip-wrapper" @click="clear">
+			<button v-if="has_value" class="tw-mg-l-05 tw-mg-y-05 tw-button tw-button--text tw-tooltip__container" @click="clear">
 				<span class="tw-button__text ffz-i-cancel" />
 				<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-right">
 					{{ t('setting.reset', 'Reset to Default') }}
@@ -62,14 +62,18 @@
 			</button>
 		</div>
 
+		<section v-if="item.extra && item.extra.component && item.extra.before">
+			<component :is="item.extra.component" :context="context" :item="item" :value="value" />
+		</section>
+
 		<section
 			v-if="item.description"
 			class="tw-c-text-alt-2"
 		>
 			<markdown :source="t(item.desc_i18n_key || `${item.i18n_key}.description`, item.description)" />
 		</section>
-		<section v-if="item.extra">
-			<component :is="item.extra.component" :context="context" :item="item" />
+		<section v-if="item.extra && item.extra.component && ! item.extra.before">
+			<component :is="item.extra.component" :context="context" :item="item" :value="value" />
 		</section>
 	</div>
 </template>

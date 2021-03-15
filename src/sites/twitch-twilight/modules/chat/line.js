@@ -31,6 +31,7 @@ export default class ChatLine extends Module {
 		this.inject('site.fine');
 		this.inject('site.web_munch');
 		this.inject(RichContent);
+		this.inject('experiments');
 
 		this.inject('chat.actions');
 		this.inject('chat.overrides');
@@ -55,7 +56,11 @@ export default class ChatLine extends Module {
 
 	async onEnable() {
 		this.on('chat.overrides:changed', id => this.updateLinesByUser(id), this);
+		this.on('chat:update-lines-by-user', this.updateLinesByUser, this);
+		this.on('chat:update-lines', this.updateLines, this);
+		this.on('i18n:update', this.updateLines, this);
 
+		this.chat.context.on('changed:chat.emotes.2x', this.updateLines, this);
 		this.chat.context.on('changed:chat.emoji.style', this.updateLines, this);
 		this.chat.context.on('changed:chat.bits.stack', this.updateLines, this);
 		this.chat.context.on('changed:chat.badges.style', this.updateLines, this);
@@ -81,6 +86,85 @@ export default class ChatLine extends Module {
 		this.chat.context.on('changed:chat.filtering.highlight-basic-users-blocked--regex', this.updateLines, this);
 		this.chat.context.on('changed:chat.filtering.highlight-basic-badges-blocked--list', this.updateLines, this);
 
+		this.on('chat:get-tab-commands', e => {
+			if ( this.experiments.getTwitchAssignmentByName('chat_replies') === 'control' )
+				return;
+
+			e.commands.push({
+				name: 'reply',
+				description: 'Reply to a user\'s last message.',
+				permissionLevel: 0,
+				ffz_group: 'FrankerFaceZ',
+				commandArgs: [
+					{name: 'username', isRequired: true},
+					{name: 'message', isRequired: false}
+				]
+			})
+		});
+
+		this.on('chat:pre-send-message', e => {
+			if ( this.experiments.getTwitchAssignmentByName('chat_replies') === 'control' )
+				return;
+
+			const msg = e.message,
+				types = this.parent.chat_types || {};
+
+			let user, message;
+			if ( /^\/reply ?/i.test(msg) )
+				user = msg.slice(7).trim();
+			else
+				return;
+
+			e.preventDefault();
+
+			const idx = user.indexOf(' ');
+			if ( idx !== -1 ) {
+				message = user.slice(idx + 1);
+				user = user.slice(0, idx);
+			}
+
+			if ( user.startsWith('@') )
+				user = user.slice(1);
+
+			if ( user && user.length ) {
+				user = user.toLowerCase();
+
+				const lines = Array.from(this.ChatLine.instances);
+				let i = lines.length;
+				while(i--) {
+					const line = lines[i],
+						msg = line?.props?.message,
+						u = msg?.user;
+
+					if ( ! u )
+						continue;
+
+					if ( u.login === user || u.displayName?.toLowerCase?.() === user ) {
+						if ( message ) {
+							e.sendMessage(message, {
+								reply: {
+									parentDeleted: msg.deleted || false,
+									parentDisplayName: u.displayName,
+									parentMessageBody: msg.message,
+									parentMsgId: msg.id,
+									parentUid: u.id,
+									parentUserLogin: u.login
+								}
+							});
+						} else
+							requestAnimationFrame(() => line.ffzOpenReply());
+
+						return;
+					}
+				}
+			}
+
+			e.addMessage({
+				type: types.Notice,
+				message: this.i18n.t('chat.reply.bad-user', 'Invalid user or no known message to reply to.')
+			});
+		});
+
 		const t = this,
 			React = await this.web_munch.findModule('react');
 		if ( ! React )
@@ -96,38 +180,50 @@ export default class ChatLine extends Module {
 			cls.prototype.render = function() {
 				this._ffz_no_scan = true;
 
-				if ( ! this.props.message || ! this.props.message.content )
+				if ( ! this.props.message || ! this.props.message.content || ! this.props.message.from )
 					return old_render.call(this);
 
-				const msg = t.chat.standardizeWhisper(this.props.message),
+				try {
+					const msg = t.chat.standardizeWhisper(this.props.message),
 
-					is_action = msg.is_action,
-					user = msg.user,
-					raw_color = t.overrides.getColor(user.id) || user.color,
-					color = t.parent.colors.process(raw_color),
+						is_action = msg.is_action,
+						user = msg.user,
+						raw_color = t.overrides.getColor(user.id) || user.color,
+						color = t.parent.colors.process(raw_color),
 
-					tokens = msg.ffz_tokens = msg.ffz_tokens || t.chat.tokenizeMessage(msg, null, null),
-					contents = t.chat.renderTokens(tokens, e),
+						tokens = msg.ffz_tokens = msg.ffz_tokens || t.chat.tokenizeMessage(msg, null, null),
+						contents = t.chat.renderTokens(tokens, e),
 
-					override_name = t.overrides.getName(user.id);
+						override_name = t.overrides.getName(user.id);
 
-				return e('div', {className: 'thread-message__message'},
-					e('div', {className: 'tw-pd-x-1 tw-pd-y-05'}, [
-						e('span', {
-							className: `thread-message__message--user-name notranslate${override_name ? ' ffz--name-override' : ''}`,
-							style: {
-								color
-							}
-						}, override_name || user.displayName),
-						e('span', null, is_action ? ' ' : ': '),
-						e('span', {
-							className: 'message',
-							style: {
-								color: is_action && color
-							}
-						}, contents)
-					])
-				);
+					return e('div', {className: 'thread-message__message'},
+						e('div', {className: 'tw-pd-x-1 tw-pd-y-05'}, [
+							e('span', {
+								className: `thread-message__message--user-name notranslate${override_name ? ' ffz--name-override' : ''}`,
+								style: {
+									color
+								}
+							}, override_name || user.displayName),
+							e('span', null, is_action ? ' ' : ': '),
+							e('span', {
+								className: 'message',
+								style: {
+									color: is_action && color
+								}
+							}, contents)
+						])
+					);
+
+				} catch(err) {
+					t.log.error(err);
+					t.log.capture(err, {
+						extra: {
+							props: this.props
+						}
+					});
+
+					return old_render.call(this);
+				}
 			}
 
 			// Do this after a short delay to hopefully reduce the chance of React
@@ -158,14 +254,93 @@ export default class ChatLine extends Module {
 					props.showTimestamps !== this.props.showTimestamps;
 			}
 
+			cls.prototype.ffzOpenReply = function() {
+				if ( this.props.reply ) {
+					this.setOPCardTray(this.props.reply);
+					return;
+				}
+
+				const old_render_author = this.renderMessageAuthor;
+				this.renderMessageAuthor = () => this.ffzReplyAuthor();
+
+				const tokens = this.props.message?.ffz_tokens;
+				if ( ! tokens )
+					return;
+
+				this.setMessageTray(this.props.message, t.chat.renderTokens(tokens, e));
+
+				this.renderMessageAuthor = old_render_author;
+			}
+
+			cls.prototype.ffzReplyAuthor = function() {
+				const msg = t.chat.standardizeMessage(this.props.message),
+					user = msg.user,
+					raw_color = t.overrides.getColor(user.id) || user.color,
+					color = t.parent.colors.process(raw_color);
+
+				let room = msg.roomLogin ? msg.roomLogin : msg.channel ? msg.channel.slice(1) : undefined,
+					room_id = msg.roomId ? msg.roomId : this.props.channelID;
+
+				if ( ! room && room_id ) {
+					const r = t.chat.getRoom(room_id, null, true);
+					if ( r && r.login )
+						room = msg.roomLogin = r.login;
+				}
+
+				if ( ! room_id && room ) {
+					const r = t.chat.getRoom(null, room_id, true);
+					if ( r && r.id )
+						room_id = msg.roomId = r.id;
+				}
+
+				const user_block = [
+					e('span', {
+						className: 'chat-author__display-name'
+					}, user.displayName),
+					user.isIntl && e('span', {
+						className: 'chat-author__intl-login'
+					}, ` (${user.login})`)
+				];
+
+				const override_name = t.overrides.getName(user.id);
+
+				return e('span', {
+					'data-room-id': room_id,
+					'data-room': room,
+					'data-user-id': user.userID,
+					'data-user': user.userLogin && user.userLogin.toLowerCase()
+				}, [
+					//t.actions.renderInline(msg, this.props.showModerationIcons, u, r, e),
+					e('span', {
+						className: 'chat-line__message--badges'
+					}, t.chat.badges.render(msg, e)),
+					e('span', {
+						className: `chat-line__username notranslate${override_name ? ' ffz--name-override tw-relative tw-tooltip__container' : ''}`,
+						role: 'button',
+						style: { color },
+						onClick: this.ffz_user_click_handler,
+						onContextMenu: t.actions.handleUserContext
+					}, override_name ? [
+						e('span', {
+							className: 'chat-author__display-name'
+						}, override_name),
+						e('div', {
+							className: 'tw-tooltip tw-tooltip--down tw-tooltip--align-center'
+						}, user_block)
+					] : user_block)
+				]);
+			}
+
 			cls.prototype.render = function() { try {
 				this._ffz_no_scan = true;
 
 				const types = t.parent.message_types || {},
 					deleted_count = this.props.deletedCount,
+					reply_mode = t.chat.context.get('chat.replies.style'),
 					override_mode = t.chat.context.get('chat.filtering.display-deleted'),
 
 					msg = t.chat.standardizeMessage(this.props.message),
+					reply_tokens = (reply_mode === 2 || (reply_mode === 1 && this.props.repliesAppearancePreference && this.props.repliesAppearancePreference !== 'expanded')) ? ( msg.ffz_reply = msg.ffz_reply || t.chat.tokenizeReply(this.props.reply) ) : null,
 					is_action = msg.messageType === types.Action,
 
 					user = msg.user,
@@ -175,6 +350,11 @@ export default class ChatLine extends Module {
 
 				let mod_mode = this.props.deletedMessageDisplay;
 				let show, show_class, mod_action = null;
+
+				const highlight_mode = t.chat.context.get('chat.points.allow-highlight'),
+					highlight = highlight_mode > 0 && msg.ffz_type === 'points' && msg.ffz_reward && isHighlightedReward(msg.ffz_reward),
+					twitch_highlight = highlight && highlight_mode == 1,
+					ffz_highlight = highlight && highlight_mode == 2;
 
 				if ( ! this.props.isCurrentUserModerator && mod_mode == 'DETAILED' )
 					mod_mode = 'LEGACY';
@@ -259,14 +439,23 @@ other {# messages were deleted by a moderator.}
 				const u = t.site.getUser(),
 					r = {id: room_id, login: room};
 
+				const has_replies = this.chatRepliesTreatment ? this.chatRepliesTreatment !== 'control' : false,
+					can_replies = has_replies && msg.message && ! msg.deleted && ! this.props.disableReplyClick,
+					can_reply = can_replies && u && u.login !== msg.user?.login && ! msg.reply,
+					twitch_clickable = reply_mode === 1 && can_replies && (!!msg.reply || can_reply);
+
 				if ( u ) {
 					u.moderator = this.props.isCurrentUserModerator;
 					u.staff = this.props.isCurrentUserStaff;
+					u.can_reply = reply_mode === 2 && can_reply;
 				}
 
 				const tokens = msg.ffz_tokens = msg.ffz_tokens || t.chat.tokenizeMessage(msg, u, r),
 					rich_content = FFZRichContent && t.chat.pluckRichContent(tokens, msg),
 					bg_css = msg.mentioned && msg.mention_color ? t.parent.inverse_colors.process(msg.mention_color) : null;
+
+				if ( ! this.ffz_open_reply )
+					this.ffz_open_reply = this.ffzOpenReply.bind(this);
 
 				if ( ! this.ffz_user_click_handler ) {
 					if ( this.props.onUsernameClick )
@@ -315,36 +504,44 @@ other {# messages were deleted by a moderator.}
 
 				const override_name = t.overrides.getName(user.id);
 
+				const user_bits = [
+					t.actions.renderInline(msg, this.props.showModerationIcons, u, r, e),
+					e('span', {
+						className: 'chat-line__message--badges'
+					}, t.chat.badges.render(msg, e)),
+					e('span', {
+						className: `chat-line__username notranslate${override_name ? ' ffz--name-override tw-relative tw-tooltip__container' : ''}`,
+						role: 'button',
+						style: { color },
+						onClick: this.ffz_user_click_handler,
+						onContextMenu: t.actions.handleUserContext
+					}, override_name ? [
+						e('span', {
+							className: 'chat-author__display-name'
+						}, override_name),
+						e('div', {
+							className: 'tw-tooltip tw-tooltip--down tw-tooltip--align-center'
+						}, user_block)
+					] : user_block)
+				];
 
-				let cls = `chat-line__message${show_class ? ' ffz--deleted-message' : ''}`,
+				let cls = `chat-line__message${show_class ? ' ffz--deleted-message' : ''}${twitch_clickable ? ' tw-relative' : ''}`,
 					out = (tokens.length || ! msg.ffz_type) ? [
-						this.props.showTimestamps && e('span', {
+						(this.props.showTimestamps || this.props.isHistorical) && e('span', {
 							className: 'chat-line__timestamp'
 						}, t.chat.formatTime(msg.timestamp)),
-						t.actions.renderInline(msg, this.props.showModerationIcons, u, r, e),
-						e('span', {
-							className: 'chat-line__message--badges'
-						}, t.chat.badges.render(msg, e)),
-						e('span', {
-							className: `chat-line__username notranslate${override_name ? ' ffz--name-override tw-relative tw-tooltip-wrapper' : ''}`,
-							role: 'button',
-							style: { color },
-							onClick: this.ffz_user_click_handler,
-							onContextMenu: t.actions.handleUserContext
-						}, override_name ? [
-							e('span', {
-								className: 'chat-author__display_name'
-							}, override_name),
-							e('div', {
-								className: 'tw-tooltip tw-tooltip--down tw-tooltip--align-center'
-							}, user_block)
-						] : user_block),
-						e('span', null, is_action ? ' ' : ': '),
+						//twitch_clickable ?
+						//	e('div', {className: 'chat-line__username-container tw-inline-block'}, user_bits) :
+						user_bits,
+						e('span', {'aria-hidden': true}, is_action ? ' ' : ': '),
+						show && has_replies && reply_tokens ?
+							t.chat.renderTokens(reply_tokens, e)
+							: null,
 						show ?
 							e('span', {
-								className:'message',
+								className:`message ${twitch_highlight ? 'chat-line__message-body--highlighted' : ''}`,
 								style: is_action ? { color } : null
-							}, t.chat.renderTokens(tokens, e))
+							}, t.chat.renderTokens(tokens, e, (reply_mode !== 0 && has_replies) ? this.props.reply : null))
 							:
 							e('span', {
 								className: 'chat-line__message--deleted',
@@ -385,7 +582,7 @@ other {# messages were deleted by a moderator.}
 								onClick: this.ffz_user_click_handler
 							}, e('span', {
 								className: 'tw-c-text-base tw-strong'
-							}, user.userDisplayName)),
+							}, user.displayName)),
 						count: msg.sub_count,
 						tier: SUB_TIERS[msg.sub_plan] || 1,
 						channel: msg.roomLogin
@@ -430,7 +627,7 @@ other {# messages were deleted by a moderator.}
 						}, the_list);
 					}
 
-					cls = `ffz-notice-line user-notice-line tw-pd-y-05 ffz--subscribe-line${show_class ? ' ffz--deleted-message' : ''}`;
+					cls = `ffz-notice-line user-notice-line tw-pd-y-05 ffz--subscribe-line${show_class ? ' ffz--deleted-message' : ''}${twitch_clickable ? ' tw-relative' : ''}`;
 					out = [
 						e('div', {
 							className: 'tw-flex tw-c-text-alt-2',
@@ -462,9 +659,13 @@ other {# messages were deleted by a moderator.}
 
 				} else if ( msg.ffz_type === 'sub_gift' ) {
 					const plan = msg.sub_plan || {},
+						months = msg.sub_months || 1,
 						tier = SUB_TIERS[plan.plan] || 1;
 
-					const sub_msg = t.i18n.tList('chat.sub.mystery', '{user} gifted a {plan} Sub to {recipient}! ', {
+					let sub_msg;
+
+					const bits = {
+						months,
 						user: (msg.sub_anon || user.username === 'ananonymousgifter') ?
 							t.i18n.t('chat.sub.anonymous-gifter', 'An anonymous gifter') :
 							e('span', {
@@ -473,7 +674,7 @@ other {# messages were deleted by a moderator.}
 								onClick: this.ffz_user_click_handler
 							}, e('span', {
 								className: 'tw-c-text-base tw-strong'
-							}, user.userDisplayName)),
+							}, user.displayName)),
 						plan: plan.plan === 'custom' ? '' :
 							t.i18n.t('chat.sub.gift-plan', 'Tier {tier}', {tier}),
 						recipient: e('span', {
@@ -484,7 +685,13 @@ other {# messages were deleted by a moderator.}
 						}, e('span', {
 							className: 'tw-c-text-base tw-strong'
 						}, msg.sub_recipient.displayName))
-					});
+					};
+
+
+					if ( months <= 1 )
+						sub_msg = t.i18n.tList('chat.sub.mystery', '{user} gifted a {plan} Sub to {recipient}! ', bits);
+					else
+						sub_msg = t.i18n.tList('chat.sub.gift-months', '{user} gifted {months,number} month{months,en_plural} of {plan} Sub to {recipient}!', bits);
 
 					if ( msg.sub_total === 1 )
 						sub_msg.push(t.i18n.t('chat.sub.gift-first', "It's their first time gifting a Sub in the channel!"));
@@ -493,7 +700,7 @@ other {# messages were deleted by a moderator.}
 							count: msg.sub_total
 						}));
 
-					cls = `ffz-notice-line user-notice-line tw-pd-y-05 tw-pd-r-2 ffz--subscribe-line${show_class ? ' ffz--deleted-message' : ''}`;
+					cls = `ffz-notice-line user-notice-line tw-pd-y-05 tw-pd-r-2 ffz--subscribe-line${show_class ? ' ffz--deleted-message' : ''}${twitch_clickable ? ' tw-relative' : ''}`;
 					out = [
 						e('div', {className: 'tw-flex tw-c-text-alt-2'}, [
 							t.chat.context.get('chat.subs.compact') ? null :
@@ -529,9 +736,9 @@ other {# messages were deleted by a moderator.}
 								onClick: this.ffz_user_click_handler
 							}, e('span', {
 								className: 'tw-c-text-base tw-strong'
-							}, user.userDisplayName)),
+							}, user.displayName)),
 							plan: plan.prime ?
-								t.i18n.t('chat.sub.twitch-prime', 'with Twitch Prime') :
+								t.i18n.t('chat.sub.twitch-prime', 'with Prime Gaming') :
 								t.i18n.t('chat.sub.plan', 'at Tier {tier}', {tier})
 						});
 
@@ -555,7 +762,7 @@ other {# messages were deleted by a moderator.}
 							));
 						}
 
-						cls = `ffz-notice-line user-notice-line tw-pd-y-05 tw-pd-r-2 ffz--subscribe-line${show_class ? ' ffz--deleted-message' : ''}`;
+						cls = `ffz-notice-line user-notice-line tw-pd-y-05 tw-pd-r-2 ffz--subscribe-line${show_class ? ' ffz--deleted-message' : ''}${twitch_clickable ? ' tw-relative' : ''}`;
 						out = [
 							e('div', {className: 'tw-flex tw-c-text-alt-2'}, [
 								t.chat.context.get('chat.subs.compact') ? null :
@@ -588,12 +795,12 @@ other {# messages were deleted by a moderator.}
 									onClick: this.ffz_user_click_handler
 								}, e('span', {
 									className: 'tw-c-text-base tw-strong'
-								}, user.userDisplayName))
+								}, user.displayName))
 							})
 						]);
 
 					if ( system_msg ) {
-						cls = `ffz-notice-line user-notice-line tw-pd-y-05 tw-pd-r-2 ffz--ritual-line${show_class ? ' ffz--deleted-message' : ''}`;
+						cls = `ffz-notice-line user-notice-line tw-pd-y-05 tw-pd-r-2 ffz--ritual-line${show_class ? ' ffz--deleted-message' : ''}${twitch_clickable ? ' tw-relative' : ''}`;
 						out = [
 							system_msg,
 							out && e('div', {
@@ -613,10 +820,7 @@ other {# messages were deleted by a moderator.}
 							t.i18n.formatNumber(getRewardCost(msg.ffz_reward))
 						]);
 
-					const can_highlight = t.chat.context.get('chat.points.allow-highlight'),
-						highlight = can_highlight && isHighlightedReward(msg.ffz_reward);
-
-					cls = `ffz-notice-line ffz--points-line tw-pd-l-1 tw-pd-y-05 tw-pd-r-2${highlight ? ' ffz--points-highlight' : ''}${show_class ? ' ffz--deleted-message' : ''}`;
+					cls = `ffz-notice-line ffz--points-line tw-pd-l-1 tw-pd-y-05 tw-pd-r-2${ffz_highlight ? ' ffz-custom-color ffz--points-highlight' : ''}${show_class ? ' ffz--deleted-message' : ''}${twitch_clickable ? ' tw-relative' : ''}`;
 					out = [
 						e('div', {className: 'tw-c-text-alt-2'}, [
 							out ? null : t.actions.renderInline(msg, this.props.showModerationIcons, u, r, e),
@@ -630,7 +834,7 @@ other {# messages were deleted by a moderator.}
 										onClick: this.ffz_user_click_handler
 									}, e('span', {
 										className: 'tw-c-text-base tw-strong'
-									}, user.userDisplayName))
+									}, user.displayName))
 								})
 						]),
 						out && e('div', {
@@ -645,6 +849,41 @@ other {# messages were deleted by a moderator.}
 
 				if ( ! out )
 					return null;
+
+				if ( twitch_clickable ) {
+					let icon, title;
+					if ( can_reply ) {
+						icon = e('figure', {className: 'ffz-i-reply'});
+						title = t.i18n.t('chat.actions.reply', 'Reply to Message');
+					} else {
+						icon = e('figure', {className: 'ffz-i-threads'});
+						title = t.i18n.t('chat.actions.reply.thread', 'Open Thread');
+					}
+
+					out = [
+						e('div', {
+							className: 'chat-line__message-highlight tw-absolute tw-border-radius-medium tw-top-0 tw-bottom-0 tw-right-0 tw-left-0',
+							'data-test-selector': 'chat-message-highlight'
+						}),
+						e('div', {
+							className: 'chat-line__message-container'
+						}, [
+							this.props.repliesAppearancePreference && this.props.repliesAppearancePreference === 'expanded' ? this.renderReplyLine() : null,
+							out
+						]),
+						e('div', {
+							className: 'chat-line__reply-icon tw-absolute tw-border-radius-medium tw-c-background-base tw-elevation-1'
+						}, e('button', {
+							className: 'tw-align-items-center tw-align-middle tw-border-bottom-left-radius-medium tw-border-bottom-right-radius-medium tw-border-top-left-radius-medium tw-border-top-right-radius-medium tw-button-icon ffz-core-button tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden tw-relative ffz-tooltip ffz-tooltip--no-mouse',
+							'data-test-selector': 'chat-reply-button',
+							'aria-label': title,
+							'data-title': title,
+							onClick: this.ffz_open_reply
+						}, e('span', {
+							className: 'tw-button-icon__icon'
+						}, icon)))
+					];
+				}
 
 				return e('div', {
 					className: `${cls}${msg.mentioned ? ' ffz-mentioned' : ''}${bg_css ? ' ffz-custom-color' : ''}`,
@@ -760,15 +999,20 @@ other {# messages were deleted by a moderator.}
 		for(const inst of this.ChatLine.instances) {
 			const msg = inst.props.message,
 				user = msg?.user;
-			if ( user && (id && id == user.id) || (login && login == user.login) )
+			if ( user && ((id && id == user.id) || (login && login == user.login)) ) {
+				msg.ffz_tokens = null;
+				msg.highlights = msg.mentioned = msg.mention_color = null;
 				inst.forceUpdate();
+			}
 		}
 
 		for(const inst of this.WhisperLine.instances) {
 			const msg = inst.props.message?._ffz_message,
 				user = msg?.user;
-			if ( user && (id && id == user.id) || (login && login == user.login) )
+			if ( user && ((id && id == user.id) || (login && login == user.login)) ) {
+				msg._ffz_message = null;
 				inst.forceUpdate();
+			}
 		}
 	}
 
@@ -783,7 +1027,7 @@ other {# messages were deleted by a moderator.}
 			const msg = inst.props.message;
 			if ( msg ) {
 				msg.ffz_tokens = null;
-				msg.mentioned = msg.mention_color = null;
+				msg.highlights = msg.mentioned = msg.mention_color = null;
 			}
 		}
 
@@ -791,7 +1035,7 @@ other {# messages were deleted by a moderator.}
 			const msg = inst.props.message;
 			if ( msg ) {
 				msg.ffz_tokens = null;
-				msg.mentioned = msg.mention_color = null;
+				msg.highlights = msg.mentioned = msg.mention_color = null;
 			}
 		}
 

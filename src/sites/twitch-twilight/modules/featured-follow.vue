@@ -30,7 +30,7 @@
 								<div class="tw-flex-grow-1 tw-pd-x-2" />
 
 								<div v-if="user.error">
-									{{ t('featured-follow.error', 'An error occured.') }}
+									{{ t('featured-follow.error', 'An error occurred.') }}
 								</div>
 								<template v-else>
 									<button
@@ -92,7 +92,7 @@ export default {
 	methods: {
 		clickWithTip(event, fn, ...args) {
 			const el = event.target,
-				tip = el && el._ffz_tooltip$0,
+				tip = el && el._ffz_tooltip,
 				visible = tip && tip.visible;
 
 			visible && tip.hide();

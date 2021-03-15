@@ -1,4 +1,4 @@
-	'use strict';
+'use strict';
 
 // ============================================================================
 // Channel Metadata
@@ -12,15 +12,31 @@ import {duration_to_string, durationForURL} from 'utilities/time';
 import Tooltip from 'utilities/tooltip';
 import Module from 'utilities/module';
 
+const CLIP_URL = /^https:\/\/[^/]+\.(?:twitch\.tv|twitchcdn\.net)\/.+?\.mp4(?:\?.*)?$/;
+
 export default class Metadata extends Module {
 	constructor(...args) {
 		super(...args);
 
 		this.inject('settings');
 		this.inject('i18n');
+		this.inject('tooltips');
 
 		this.should_enable = true;
 		this.definitions = {};
+
+		this.settings.add('metadata.clip-download', {
+			default: true,
+
+			ui: {
+				path: 'Channel > Metadata >> Clips',
+				title: 'Add a Download button for editors to clip pages.',
+				description: 'This adds a download button beneath the player on clip pages (the main site, not on `clips.twitch.tv`) for broadcasters and their editors.',
+				component: 'setting-check-box'
+			},
+
+			changed: () => this.updateMetadata('clip-download')
+		});
 
 		this.settings.add('metadata.player-stats', {
 			default: false,
@@ -55,7 +71,7 @@ export default class Metadata extends Module {
 		});
 
 		this.settings.add('metadata.uptime', {
-			default: 1,
+			default: 2,
 
 			ui: {
 				path: 'Channel > Metadata >> Player',
@@ -73,22 +89,72 @@ export default class Metadata extends Module {
 			changed: () => this.updateMetadata('uptime')
 		});
 
+		this.settings.add('metadata.viewers', {
+			default: false,
+
+			ui: {
+				path: 'Channel > Metadata >> Player',
+				title: 'Alternative Viewer Count',
+				description: "This displays the current channel's viewer count without an animation when it changes.",
+
+				component: 'setting-check-box'
+			},
+
+			changed: () => this.updateMetadata('viewers')
+		});
+
+
+		this.definitions.viewers = {
+
+			refresh() { return this.settings.get('metadata.viewers') },
+
+			setup(data) {
+				return {
+					live: data.channel?.live && data.channel?.live_since != null,
+					count: data.getViewerCount()
+				}
+			},
+
+			order: 1,
+			icon: 'ffz-i-viewers',
+
+			label(data) {
+				if ( ! this.settings.get('metadata.viewers') || ! data.live )
+					return null;
+
+				return this.i18n.formatNumber(data.count)
+			},
+
+			tooltip() {
+				return this.i18n.t('metadata.viewers', 'Viewer Count');
+			},
+
+			color: 'var(--color-text-live)'
+		};
+
 
 		this.definitions.uptime = {
 			inherit: true,
 			no_arrow: true,
+			player: true,
 
 			refresh() { return this.settings.get('metadata.uptime') > 0 },
 
 			setup(data) {
-				const socket = this.resolve('socket'),
-					created_at = data?.meta?.createdAt;
+				const socket = this.resolve('socket');
+				let created = data?.channel?.live_since;
+				if ( ! created ) {
+					const created_at = data?.meta?.createdAt;
+					if ( ! created_at )
+						return {};
 
-				if ( ! created_at )
-					return {};
+					created = created_at;
+				}
 
-				const created = new Date(created_at),
-					now = Date.now() - socket._time_drift;
+				if ( !(created instanceof Date) )
+					created = new Date(created);
+
+				const now = Date.now() - socket._time_drift;
 
 				return {
 					created,
@@ -148,7 +214,7 @@ export default class Metadata extends Module {
 					return false;
 				} : null;
 
-				tip.element.classList.add('tw-balloon--lg');
+				tip.element.classList.add('ffz-balloon--lg');
 
 				return (<div>
 					<div class="tw-pd-b-1 tw-mg-b-1 tw-border-b tw-semibold">
@@ -158,14 +224,14 @@ export default class Metadata extends Module {
 					</div>
 					<div class="tw-flex tw-align-items-center">
 						<input
-							class="tw-border-radius-medium tw-font-size-6 tw-pd-x-1 tw-pd-y-05 tw-input tw-full-width"
+							class="tw-border-radius-medium tw-font-size-6 tw-pd-x-1 tw-pd-y-05 ffz-input tw-full-width"
 							type="text"
 							value={url}
 							onFocus={e => e.target.select()}
 						/>
-						{can_copy && <div class="tw-relative tw-tooltip-wrapper tw-mg-l-1">
+						{can_copy && <div class="tw-relative tw-tooltip__container tw-mg-l-1">
 							<button
-								class="tw-align-items-center tw-align-middle tw-border-bottom-left-radius-medium tw-border-bottom-right-radius-medium tw-border-top-left-radius-medium tw-border-top-right-radius-medium tw-button-icon tw-core-button tw-core-button--border tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden tw-relative"
+								class="tw-align-items-center tw-align-middle tw-border-bottom-left-radius-medium tw-border-bottom-right-radius-medium tw-border-top-left-radius-medium tw-border-top-right-radius-medium tw-button-icon ffz-core-button ffz-core-button--border tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden tw-relative"
 								aria-label={ this.i18n.t('metadata.uptime.copy', 'Copy to Clipboard') }
 								onClick={copy}
 							>
@@ -184,9 +250,53 @@ export default class Metadata extends Module {
 			}
 		}
 
+		this.definitions['clip-download'] = {
+			button: true,
+			inherit: true,
+
+			setup(data) {
+				if ( ! this.settings.get('metadata.clip-download') )
+					return;
+
+				const Player = this.resolve('site.player'),
+					player = Player.current;
+				if ( ! player )
+					return;
+
+				const sink = player.mediaSinkManager || player.core?.mediaSinkManager,
+					src = sink?.video?.src;
+
+				if ( ! src || ! CLIP_URL.test(src) )
+					return;
+
+				if ( this.settings.get('metadata.clip-download.force') )
+					return src;
+
+				const user = this.resolve('site').getUser?.(),
+					is_self = user?.id == data.channel.id;
+
+				if ( is_self || data.getUserSelfImmediate(data.refresh)?.isEditor )
+					return src;
+			},
+
+			label(src) {
+				if ( src )
+					return this.i18n.t('metadata.clip-download', 'Download');
+			},
+
+			icon: 'ffz-i-download',
+
+			click(src) {
+				const link = createElement('a', {target: '_blank', href: src});
+				link.click();
+			}
+		}
+
 		this.definitions['player-stats'] = {
 			button: true,
 			inherit: true,
+			modview: true,
+			player: true,
 
 			refresh() {
 				return this.settings.get('metadata.player-stats')
@@ -220,7 +330,7 @@ export default class Metadata extends Module {
 						skippedFrames: temp.dropped_frames,
 						videoResolution: `${temp.vid_width}x${temp.vid_height}`
 					}
-				} else if ( player.stats || player.core?.stats ) {
+				} else {
 					const videoHeight = maybe_call(player.getVideoHeight, player) || 0,
 						videoWidth = maybe_call(player.getVideoWidth, player) || 0,
 						displayHeight = maybe_call(player.getDisplayHeight, player) || 0,
@@ -237,12 +347,23 @@ export default class Metadata extends Module {
 						displayWidth,
 						rate: maybe_call(player.getPlaybackRate, player),
 						fps: Math.floor(maybe_call(player.getVideoFrameRate, player) || 0),
-						hlsLatencyBroadcaster: player.stats?.broadcasterLatency || player.core?.stats?.broadcasterLatency,
-						hlsLatencyEncoder: player.stats?.transcoderLatency || player.core?.stats?.transcoderLatency,
+						hlsLatencyBroadcaster: maybe_call(player.getLiveLatency, player) || 0,
+						//hlsLatencyBroadcaster: player.stats?.broadcasterLatency || player.core?.stats?.broadcasterLatency,
+						//hlsLatencyEncoder: player.stats?.transcoderLatency || player.core?.stats?.transcoderLatency,
 						playbackRate: Math.floor((maybe_call(player.getVideoBitRate, player) || 0) / 1000),
 						skippedFrames: maybe_call(player.getDroppedFrames, player),
 					}
 				}
+
+				let tampered = false;
+				try {
+					const url = player.core.state.path;
+					if ( url.includes('/api/channel/hls/') ) {
+						const data = JSON.parse(new URL(url).searchParams.get('token'));
+						tampered = data && data.player_type && data.player_type !== 'site' ? data.player_type : false;
+					}
+				} catch(err) { /* no op */ }
+
 
 				if ( ! stats || stats.hlsLatencyBroadcaster < -100 )
 					return {stats};
@@ -257,7 +378,8 @@ export default class Metadata extends Module {
 					drift,
 					rate: stats.rate == null ? 1 : stats.rate,
 					delay: stats.hlsLatencyBroadcaster,
-					old: stats.hlsLatencyBroadcaster > 180
+					old: stats.hlsLatencyBroadcaster > 180,
+					tampered
 				}
 			},
 
@@ -300,13 +422,23 @@ export default class Metadata extends Module {
 					return;
 
 				if ( data.delay > (setting * 2) )
-					return '#ec1313';
+					return data.is_player ? '#f9b6b6' : '#ec1313';
 
 				else if ( data.delay > setting )
-					return '#fc7835';
+					return data.is_player ? '#fcb896' : '#fc7835';
 			},
 
 			tooltip(data) {
+				const tampered = data.tampered ? (<div class="tw-border-t tw-mg-t-05 tw-pd-t-05">
+					{this.i18n.t(
+						'metadata.player-stats.tampered',
+						'Your player has an unexpected player type ({type}), which may affect your viewing experience.',
+						{
+							type: data.tampered
+						}
+					)}
+				</div>) : null;
+
 				const delayed = data.drift > 5000 && (<div class="tw-border-b tw-mg-b-05 tw-pd-b-05">
 					{this.i18n.t(
 						'metadata.player-stats.delay-warning',
@@ -327,7 +459,8 @@ export default class Metadata extends Module {
 					return [
 						delayed,
 						ff,
-						this.i18n.t('metadata.player-stats.latency-tip', 'Stream Latency')
+						this.i18n.t('metadata.player-stats.latency-tip', 'Stream Latency'),
+						tampered
 					];
 
 				const stats = data.stats,
@@ -353,7 +486,8 @@ export default class Metadata extends Module {
 						</div>,
 						<div class="tw-pd-t-05">
 							{video_info}
-						</div>
+						</div>,
+						tampered
 					];
 
 				return [
@@ -364,9 +498,47 @@ export default class Metadata extends Module {
 					),
 					<div class="tw-pd-t-05">
 						{video_info}
-					</div>
+					</div>,
+					tampered
 				];
 			}
+		}
+	}
+
+	onEnable() {
+		const md = this.tooltips.types.metadata = target => {
+			let el = target;
+			if ( el._ffz_stat )
+				el = el._ffz_stat;
+			else if ( ! el.classList.contains('ffz-stat') ) {
+				el = target.closest('.ffz-stat');
+				target._ffz_stat = el;
+			}
+
+			if ( ! el )
+				return;
+
+			const key = el.dataset.key,
+				def = this.definitions[key];
+
+			return maybe_call(def.tooltip, this, el._ffz_data)
+		};
+
+		md.onShow = (target, tip) => {
+			const el = target._ffz_stat || target;
+			el.tip = tip;
+		};
+
+		md.onHide = target => {
+			const el = target._ffz_stat || target;
+			el.tip = null;
+			el.tip_content = null;
+		}
+
+		md.popperConfig = (target, tip, opts) => {
+			opts.placement = 'bottom';
+			opts.modifiers.flip = {behavior: ['bottom','top']};
+			return opts;
 		}
 	}
 
@@ -381,17 +553,15 @@ export default class Metadata extends Module {
 	}
 
 	updateMetadata(keys) {
-		const bar = this.resolve('site.channel_bar');
-		if ( bar ) {
-			for(const inst of bar.ChannelBar.instances)
-				bar.updateMetadata(inst, keys);
-		}
+		const channel = this.resolve('site.channel');
+		if ( channel )
+			for(const el of channel.InfoBar.instances)
+				channel.updateMetadata(el, keys);
 
-		const legacy_bar = this.resolve('site.legacy_channel_bar');
-		if ( legacy_bar ) {
-			for(const inst of legacy_bar.ChannelBar.instances)
-				legacy_bar.updateMetadata(inst, keys);
-		}
+		const player = this.resolve('site.player');
+		if ( player )
+			for(const inst of player.Player.instances)
+				player.updateMetadata(inst, keys);
 	}
 
 	async renderLegacy(key, data, container, timers, refresh_fn) {
@@ -421,6 +591,13 @@ export default class Metadata extends Module {
 			return destroy();
 
 		try {
+			const ref_fn = () => refresh_fn(key);
+			data = {
+				...data,
+				is_player: false,
+				refresh: ref_fn
+			};
+
 			// Process the data if a setup method is defined.
 			if ( def.setup )
 				data = await def.setup.call(this, data);
@@ -429,7 +606,7 @@ export default class Metadata extends Module {
 			const refresh = maybe_call(def.refresh, this, data);
 			if ( refresh )
 				timers[key] = setTimeout(
-					() => refresh_fn(key),
+					ref_fn,
 					typeof refresh === 'number' ? refresh : 1000
 				);
 
@@ -465,12 +642,13 @@ export default class Metadata extends Module {
 
 					if ( def.popup && def.click ) {
 						el = (<div
-							class={`tw-align-items-center tw-inline-flex tw-relative tw-tooltip-wrapper ffz-stat tw-stat ffz-stat--fix-padding ${border ? 'tw-mg-l-1' : 'tw-mg-l-05 ffz-mg-r--05'}`}
+							class={`tw-align-items-center tw-inline-flex tw-relative tw-tooltip__container ffz-stat tw-stat ffz-stat--fix-padding ${border ? 'tw-mg-r-1' : 'tw-mg-r-05 ffz-mg-l--05'}`}
 							data-key={key}
 							tip_content={null}
 						>
 							{btn = (<button
-								class={`tw-align-items-center tw-align-middle tw-border-bottom-left-radius-medium tw-border-top-left-radius-medium tw-core-button tw-core-button--padded tw-core-button--text ${inherit ? 'ffz-c-text-inherit' : 'tw-c-text-base'} tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden tw-relative ${border ? 'tw-border-l tw-border-t tw-border-b' : 'tw-font-size-5 tw-regular'}`}
+								class={`tw-align-items-center tw-align-middle tw-border-bottom-left-radius-medium tw-border-top-left-radius-medium ffz-core-button ffz-core-button--padded ffz-core-button--text ${inherit ? 'ffz-c-text-inherit' : 'tw-c-text-base'} tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden tw-relative ${border ? 'tw-border-l tw-border-t tw-border-b' : 'tw-font-size-5 tw-regular'}${def.tooltip ? ' ffz-tooltip ffz-tooltip--no-mouse' : ''}`}
+								data-tooltip-type="metadata"
 							>
 								<div class="tw-align-items-center tw-flex tw-flex-grow-0 tw-justify-center tw-pd-x-1">
 									{icon}
@@ -478,7 +656,8 @@ export default class Metadata extends Module {
 								</div>
 							</button>)}
 							{popup = (<button
-								class={`tw-align-items-center tw-align-middle tw-border-bottom-right-radius-medium tw-border-top-right-radius-medium tw-core-button tw-core-button--text ${inherit ? 'ffz-c-text-inherit' : 'tw-c-text-base'} tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden tw-relative ${border ? 'tw-border' : 'tw-font-size-5 tw-regular'}`}
+								class={`tw-align-items-center tw-align-middle tw-border-bottom-right-radius-medium tw-border-top-right-radius-medium ffz-core-button ffz-core-button--text ${inherit ? 'ffz-c-text-inherit' : 'tw-c-text-base'} tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden tw-relative ${border ? 'tw-border' : 'tw-font-size-5 tw-regular'}${def.tooltip ? ' ffz-tooltip ffz-tooltip--no-mouse' : ''}`}
+								data-tooltip-type="metadata"
 							>
 								<div class="tw-align-items-center tw-flex tw-flex-grow-0 tw-justify-center">
 									<span>
@@ -490,7 +669,8 @@ export default class Metadata extends Module {
 
 					} else
 						btn = popup = el = (<button
-							class={`ffz-stat tw-align-items-center tw-align-middle tw-border-bottom-left-radius-medium tw-border-top-left-radius-medium tw-border-bottom-right-radius-medium tw-border-top-right-radius-medium tw-core-button tw-core-button--text ${inherit ? 'ffz-c-text-inherit' : 'tw-c-text-base'} tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden tw-relative tw-pd-x-05 ffz-stat--fix-padding ${border ? 'tw-border tw-mg-l-1' : 'tw-font-size-5 tw-regular tw-mg-l-05 ffz-mg-r--05'}`}
+							class={`ffz-stat tw-align-items-center tw-align-middle tw-border-bottom-left-radius-medium tw-border-top-left-radius-medium tw-border-bottom-right-radius-medium tw-border-top-right-radius-medium ffz-core-button ffz-core-button--text ${inherit ? 'ffz-c-text-inherit' : 'tw-c-text-base'} tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden tw-relative tw-pd-x-05 ffz-stat--fix-padding ${border ? 'tw-border tw-mg-r-1' : 'tw-font-size-5 tw-regular tw-mg-r-05 ffz-mg-l--05'}${def.tooltip ? ' ffz-tooltip ffz-tooltip--no-mouse' : ''}`}
+							data-tooltip-type="metadata"
 							data-key={key}
 							tip_content={null}
 						>
@@ -548,7 +728,7 @@ export default class Metadata extends Module {
 								el._ffz_destroy = el._ffz_outside = null;
 							};
 
-							const parent = document.body.querySelector('#root>div') || document.body,
+							const parent = document.fullscreenElement || document.body.querySelector('#root>div') || document.body,
 								tt = el._ffz_popup = new Tooltip(parent, el, {
 									logger: this.log,
 									i18n: this.i18n,
@@ -556,10 +736,10 @@ export default class Metadata extends Module {
 									live: false,
 									html: true,
 
-									tooltipClass: 'ffz-metadata-balloon tw-balloon tw-block tw-border tw-elevation-1 tw-border-radius-small tw-c-background-base',
+									tooltipClass: 'ffz-metadata-balloon ffz-balloon tw-block tw-border tw-elevation-1 tw-border-radius-small tw-c-background-base',
 									// Hide the arrow for now, until we re-do our CSS to make it render correctly.
-									arrowClass: 'tw-balloon__tail tw-overflow-hidden tw-absolute',
-									arrowInner: 'tw-balloon__tail-symbol tw-border-t tw-border-r tw-border-b tw-border-l tw-border-radius-small tw-c-background-base tw-absolute',
+									arrowClass: 'ffz-balloon__tail tw-overflow-hidden tw-absolute',
+									arrowInner: 'ffz-balloon__tail-symbol tw-border-t tw-border-r tw-border-b tw-border-l tw-border-radius-small tw-c-background-base tw-absolute',
 									innerClass: 'tw-pd-1',
 
 									popper: {
@@ -589,7 +769,8 @@ export default class Metadata extends Module {
 						icon = (<span class="tw-stat__icon"><figure class={icon} /></span>);
 
 					el = (<div
-						class="tw-align-items-center tw-inline-flex tw-relative tw-tooltip-wrapper ffz-stat tw-stat tw-mg-l-1"
+						class={`tw-align-items-center tw-inline-flex tw-relative tw-tooltip__container ffz-stat tw-stat tw-mg-r-1${def.tooltip ? ' ffz-tooltip ffz-tooltip--no-mouse' : ''}`}
+						data-tooltip-type="metadata"
 						data-key={key}
 						tip_content={null}
 					>
@@ -611,40 +792,7 @@ export default class Metadata extends Module {
 				if ( order != null )
 					el.style.order = order;
 
-				let subcontainer = container;
-
-				/*if ( button )
-					subcontainer = container.querySelector('.tw-flex:last-child') || container;
-				else
-					subcontainer = container.querySelector('.tw-flex:first-child') || container;*/
-
-				subcontainer.appendChild(el);
-
-				if ( def.tooltip ) {
-					const parent = document.body.querySelector('#root>div') || document.body;
-					el.tooltip = new Tooltip(parent, el, {
-						logger: this.log,
-						live: false,
-						html: true,
-						content: () => maybe_call(def.tooltip, this, el._ffz_data),
-						onShow: (t, tip) => el.tip = tip,
-						onHide: () => {
-							el.tip = null;
-							el.tip_content = null;
-						},
-						popper: {
-							placement: 'bottom',
-							modifiers: {
-								flip: {
-									behavior: ['bottom', 'top']
-								},
-								preventOverflow: {
-									boundariesElement: parent
-								}
-							}
-						}
-					});
-				}
+				container.appendChild(el);
 
 			} else {
 				stat = el.querySelector('.ffz-stat-text');

@@ -9,7 +9,7 @@
 				<div class="tw-search-input">
 					<label for="ffz-main-menu.search" class="tw-hide-accessible">{{ t('i18n.ui.search', 'Search Strings') }}</label>
 					<div class="tw-relative">
-						<div class="tw-absolute tw-align-items-center tw-c-text-alt-2 tw-flex tw-full-height tw-input__icon tw-justify-content-center tw-left-0 tw-top-0 tw-z-default">
+						<div class="tw-absolute tw-align-items-center tw-c-text-alt-2 tw-flex tw-full-height ffz-input__icon tw-justify-content-center tw-left-0 tw-top-0 tw-z-default">
 							<figure class="ffz-i-search" />
 						</div>
 						<input
@@ -17,7 +17,7 @@
 							v-model="query"
 							:placeholder="t('i18n.ui.search', 'Search Strings')"
 							type="search"
-							class="tw-block tw-border-radius-medium tw-font-size-6 tw-full-width tw-input tw-pd-l-3 tw-pd-r-1 tw-pd-y-05"
+							class="tw-block tw-border-radius-medium tw-font-size-6 tw-full-width ffz-input tw-pd-l-3 tw-pd-r-1 tw-pd-y-05"
 							autocapitalize="off"
 							autocorrect="off"
 							autocomplete="off"
@@ -26,7 +26,7 @@
 					</div>
 				</div>
 			</div>
-			<button class="tw-button-icon tw-mg-x-05 tw-relative tw-tooltip-wrapper" @click="saveBlob">
+			<button class="tw-button-icon tw-mg-x-05 tw-relative tw-tooltip__container" @click="saveBlob">
 				<span class="tw-button-icon__icon">
 					<figure class="ffz-i-floppy" />
 				</span>
@@ -34,7 +34,7 @@
 					{{ t('i18n.ui.save', 'Generate Change Blob') }}
 				</div>
 			</button>
-			<button v-if="can_upload" class="tw-button-icon tw-mg-x-05 tw-relative tw-tooltip-wrapper" @click="uploadBlob">
+			<button v-if="can_upload" class="tw-button-icon tw-mg-x-05 tw-relative tw-tooltip__container" @click="uploadBlob">
 				<span class="tw-button-icon__icon">
 					<figure class="ffz-i-upload-cloud" />
 				</span>
@@ -42,7 +42,7 @@
 					{{ t('i18n.ui.upload', 'Upload Changes') }}
 				</div>
 			</button>
-			<button class="tw-button-icon tw-mg-x-05 tw-relative tw-tooltip-wrapper" @click="requestKeys">
+			<button class="tw-button-icon tw-mg-x-05 tw-relative tw-tooltip__container" @click="requestKeys">
 				<span class="tw-button-icon__icon">
 					<figure class="ffz-i-arrows-cw" />
 				</span>
@@ -55,7 +55,7 @@
 					<figure :class="faded ? 'ffz-i-eye-off' : 'ffz-i-eye'" />
 				</span>
 			</button>
-			<button v-if="!exclusive" class="tw-button-icon tw-mg-x-05 tw-relative tw-tooltip-wrapper" @click="popout">
+			<button v-if="!exclusive" class="tw-button-icon tw-mg-x-05 tw-relative tw-tooltip__container" @click="popout">
 				<span class="tw-button-icon__icon">
 					<figure class="ffz-i-link-ext" />
 				</span>
@@ -76,7 +76,7 @@
 		</header>
 		<section class="tw-border-t tw-full-height tw-full-width tw-flex tw-flex-column tw-overflow-hidden">
 			<header class="tw-border-b tw-pd-05 tw-c-background-base tw-flex tw-align-items-center">
-				<button class="tw-border-radius-medium tw-pd-x-05 tw-core-button tw-core-button--text tw-c-text-base tw-interactive tw-relative tw-tooltip-wrapper" @click="prevPage">
+				<button class="tw-border-radius-medium tw-pd-x-05 ffz-core-button ffz-core-button--text tw-c-text-base tw-interactive tw-relative tw-tooltip__container" @click="prevPage">
 					<span class="tw-button-icon__icon">
 						<figure class="ffz-i-left-dir" />
 					</span>
@@ -86,7 +86,7 @@
 				</button>
 				<button
 					v-if="! page_open"
-					class="tw-border-radius-medium tw-pd-x-05 tw-core-button tw-core-button--text tw-c-text-base tw-interactive"
+					class="tw-border-radius-medium tw-pd-x-05 ffz-core-button ffz-core-button--text tw-c-text-base tw-interactive"
 					@click="openPage"
 				>
 					{{ t('i18n.ui.pages', 'Page {current,number} of {total,number}', {
@@ -99,13 +99,13 @@
 					ref="pager"
 					:value="page"
 					:max="pages"
-					class="tw-block tw-border-radius-medium tw-font-size-6 tw-input tw-pd-x-1 tw-pd-y-05"
+					class="tw-block tw-border-radius-medium tw-font-size-6 ffz-input tw-pd-x-1 tw-pd-y-05"
 					type="number"
 					min="1"
 					@keydown.enter="closePage"
 					@blur="closePage"
 				>
-				<button class="tw-border-radius-medium tw-pd-x-05 tw-core-button tw-core-button--text tw-c-text-base tw-interactive tw-relative tw-tooltip-wrapper" @click="nextPage">
+				<button class="tw-border-radius-medium tw-pd-x-05 ffz-core-button ffz-core-button--text tw-c-text-base tw-interactive tw-relative tw-tooltip__container" @click="nextPage">
 					<span class="tw-button-icon__icon">
 						<figure class="ffz-i-right-dir" />
 					</span>
@@ -115,8 +115,8 @@
 				</button>
 				<div class="tw-flex-grow-1" />
 				<button
-					class="tw-border-radius-medium tw-pd-x-05 tw-core-button tw-c-text-base tw-interactive tw-relative tw-tooltip-wrapper"
-					:class="[mode === 0 ? 'tw-core-button--primary' : 'tw-core-button--text']"
+					class="tw-border-radius-medium tw-pd-x-05 ffz-core-button tw-c-text-base tw-interactive tw-relative tw-tooltip__container"
+					:class="[mode === 0 ? 'ffz-core-button--primary' : 'ffz-core-button--text']"
 					@click="mode = 0"
 				>
 					<div class="tw-align-items-center tw-flex tw-flex-grow-0">
@@ -131,8 +131,8 @@
 				</button>
 				<button
 					v-if="existing != total"
-					class="tw-mg-l-05 tw-border-radius-medium tw-pd-x-05 tw-core-button tw-c-text-base tw-interactive tw-relative tw-tooltip-wrapper"
-					:class="[mode === 1 ? 'tw-core-button--primary' : 'tw-core-button--text']"
+					class="tw-mg-l-05 tw-border-radius-medium tw-pd-x-05 ffz-core-button tw-c-text-base tw-interactive tw-relative tw-tooltip__container"
+					:class="[mode === 1 ? 'ffz-core-button--primary' : 'ffz-core-button--text']"
 					@click="mode = 1"
 				>
 					<div class="tw-align-items-center tw-flex tw-flex-grow-0">
@@ -147,8 +147,8 @@
 				</button>
 				<button
 					v-if="added"
-					class="tw-mg-l-05 tw-border-radius-medium tw-pd-x-05 tw-core-button tw-c-text-base tw-interactive tw-relative tw-tooltip-wrapper"
-					:class="[mode === 2 ? 'tw-core-button--primary' : 'tw-core-button--text']"
+					class="tw-mg-l-05 tw-border-radius-medium tw-pd-x-05 ffz-core-button tw-c-text-base tw-interactive tw-relative tw-tooltip__container"
+					:class="[mode === 2 ? 'ffz-core-button--primary' : 'ffz-core-button--text']"
 					@click="mode = 2"
 				>
 					<div class="tw-align-items-center tw-flex tw-flex-grow-0">
@@ -163,8 +163,8 @@
 				</button>
 				<button
 					v-if="changed"
-					class="tw-mg-l-05 tw-border-radius-medium tw-pd-x-05 tw-core-button tw-c-text-base tw-interactive tw-relative tw-tooltip-wrapper"
-					:class="[mode === 3 ? 'tw-core-button--primary' : 'tw-core-button--text']"
+					class="tw-mg-l-05 tw-border-radius-medium tw-pd-x-05 ffz-core-button tw-c-text-base tw-interactive tw-relative tw-tooltip__container"
+					:class="[mode === 3 ? 'ffz-core-button--primary' : 'ffz-core-button--text']"
 					@click="mode = 3"
 				>
 					<div class="tw-align-items-center tw-flex tw-flex-grow-0">
@@ -179,8 +179,8 @@
 				</button>
 				<button
 					v-if="pending"
-					class="tw-mg-l-05 tw-border-radius-medium tw-pd-x-05 tw-core-button tw-c-text-base tw-interactive tw-relative tw-tooltip-wrapper"
-					:class="[mode === 4 ? 'tw-core-button--primary' : 'tw-core-button--text']"
+					class="tw-mg-l-05 tw-border-radius-medium tw-pd-x-05 ffz-core-button tw-c-text-base tw-interactive tw-relative tw-tooltip__container"
+					:class="[mode === 4 ? 'ffz-core-button--primary' : 'ffz-core-button--text']"
 					@click="mode = 4"
 				>
 					<div class="tw-align-items-center tw-flex tw-flex-grow-0">
@@ -195,8 +195,8 @@
 				</button>
 				<button
 					v-if="invalid"
-					class="tw-mg-l-05 tw-border-radius-medium tw-pd-x-05 tw-core-button tw-c-text-base tw-interactive tw-relative tw-tooltip-wrapper"
-					:class="[mode === 5 ? 'tw-core-button--primary' : 'tw-core-button--text']"
+					class="tw-mg-l-05 tw-border-radius-medium tw-pd-x-05 ffz-core-button tw-c-text-base tw-interactive tw-relative tw-tooltip__container"
+					:class="[mode === 5 ? 'ffz-core-button--primary' : 'ffz-core-button--text']"
 					@click="mode = 5"
 				>
 					<div class="tw-align-items-center tw-flex tw-flex-grow-0">

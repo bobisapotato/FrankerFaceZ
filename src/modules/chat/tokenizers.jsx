@@ -8,10 +8,13 @@ import {sanitize, createElement} from 'utilities/dom';
 import {has, split_chars} from 'utilities/object';
 
 import {TWITCH_EMOTE_BASE, EmoteTypes, REPLACEMENT_BASE, REPLACEMENTS} from 'utilities/constants';
+import {CATEGORIES} from './emoji';
 
 
 const EMOTE_CLASS = 'chat-image chat-line__message--emote',
-	LINK_REGEX = /([^\w@#%\-+=:~])?((?:(https?:\/\/)?(?:[\w@#%\-+=:~]+\.)+[a-z]{2,6}(?:\/[\w./@#%&()\-+=:?~]*)?))([^\w./@#%&()\-+=:?~]|\s|$)/g,
+	//WHITESPACE = /^\s*$/,
+	//LINK_REGEX = /([^\w@#%\-+=:~])?((?:(https?:\/\/)?(?:[\w@#%\-+=:~]+\.)+[a-z]{2,6}(?:\/[\w./@#%&()\-+=:?~]*)?))([^\w./@#%&()\-+=:?~]|\s|$)/g,
+	NEW_LINK_REGEX = /(?:(https?:\/\/)?((?:[\w#%\-+=:~]+\.)+[a-z]{2,10}(?:\/[\w./#%&@()\-+=:?~]*)?))/g,
 	//MENTION_REGEX = /([^\w@#%\-+=:~])?(@([^\u0000-\u007F]+|\w+)+)([^\w./@#%&()\-+=:?~]|\s|$)/g; // eslint-disable-line no-control-regex
 	MENTION_REGEX = /^(['"*([{<\\/]*)(@)((?:[^\u0000-\u007F]|[\w-])+)(?:\b|$)/; // eslint-disable-line no-control-regex
 
@@ -20,7 +23,11 @@ const EMOTE_CLASS = 'chat-image chat-line__message--emote',
 // Links
 // ============================================================================
 
-const TOOLTIP_VERSION = 4;
+function datasetBool(value) {
+	return value == null ? null : value === 'true';
+}
+
+const TOOLTIP_VERSION = 5;
 
 export const Links = {
 	type: 'link',
@@ -47,63 +54,101 @@ export const Links = {
 		if ( target.dataset.isMail === 'true' )
 			return [this.i18n.t('tooltip.email-link', 'E-Mail {address}', {address: target.textContent})];
 
-		return this.get_link_info(target.dataset.url).then(data => {
+		const url = target.dataset.url || target.href,
+			show_images = datasetBool(target.dataset.forceMedia) ?? this.context.get('tooltip.link-images'),
+			show_unsafe = datasetBool(target.dataset.forceUnsafe) ?? this.context.get('tooltip.link-nsfw-images');
+
+		return Promise.all([
+			import(/* webpackChunkName: 'rich_tokens' */ 'utilities/rich_tokens'),
+			this.get_link_info(url)
+		]).then(([rich_tokens, data]) => {
 			if ( ! data || (data.v || 1) > TOOLTIP_VERSION )
 				return '';
 
-			let content = data.content || data.html || '';
+			const ctx = {
+				tList: (...args) => this.i18n.tList(...args),
+				i18n: this.i18n,
+				allow_media: show_images,
+				allow_unsafe: show_unsafe,
+				onload: () => requestAnimationFrame(() => tip.update())
+			};
 
-			// TODO: Replace timestamps.
-
-			if ( data.urls && data.urls.length > 1 )
-				content += (content.length ? '<hr>' : '') +
-					sanitize(this.i18n.t(
-						'tooltip.link-destination',
-						'Destination: {url}',
-						{url: data.urls[data.urls.length-1][1]}
-					));
-
-			if ( data.unsafe ) {
-				const reasons = Array.from(new Set(data.urls.map(x => x[2]).filter(x => x))).join(', ');
-				content = this.i18n.t(
-					'tooltip.link-unsafe',
-					"Caution: This URL is on Google's Safe Browsing List for: {reasons}",
-					{reasons: sanitize(reasons.toLowerCase())}
-				) + (content.length ? `<hr>${content}` : '');
+			let content;
+			if ( tip.element ) {
+				tip.element.classList.add('ffz-rich-tip');
+				tip.element.classList.add('tw-align-left');
 			}
 
-			const show_image = this.context.get('tooltip.link-images') && (data.image_safe || this.context.get('tooltip.link-nsfw-images'));
+			if ( data.full ) {
+				content = rich_tokens.renderTokens(data.full, createElement, ctx);
 
-			if ( show_image ) {
-				if ( data.image && ! data.image_iframe )
-					content = `<img class="preview-image" src="${sanitize(data.image)}">${content}`
+			} else {
+				if ( data.short ) {
+					content = rich_tokens.renderTokens(data.short, createElement, ctx);
+				} else
+					content = this.i18n.t('card.empty', 'No data was returned.');
+			}
 
-				setTimeout(() => {
-					if ( tip.element ) {
-						for(const el of tip.element.querySelectorAll('img'))
-							el.addEventListener('load', tip.update);
+			if ( ! data.urls )
+				return content;
 
-						for(const el of tip.element.querySelectorAll('video'))
-							el.addEventListener('loadedmetadata', tip.update);
-					}
+			const url_table = [];
+			for(let i=0; i < data.urls.length; i++) {
+				const url = data.urls[i];
+
+				url_table.push(<tr>
+					<td>{this.i18n.formatNumber(i + 1)}.</td>
+					<td class="tw-c-text-alt-2 tw-pd-x-05 tw-word-break-all">{url.url}</td>
+					<td>{url.flags ? url.flags.map(flag => <span class="tw-pill">{flag.toLowerCase()}</span>) : null}</td>
+				</tr>);
+			}
+
+			let url_notice;
+			if ( data.unsafe ) {
+				const reasons = Array.from(new Set(data.urls.map(url => url.flags).flat())).join(', ');
+				url_notice = (<div class="ffz-i-attention">
+					{this.i18n.tList(
+						'tooltip.link-unsafe',
+						"Caution: This URL is on Google's Safe Browsing List for: {reasons}",
+						{reasons: reasons.toLowerCase()}
+					)}
+				</div>);
+			} else if ( data.urls.length > 1 )
+				url_notice = this.i18n.t('tooltip.link-destination', 'Destination: {url}', {
+					url: data.urls[data.urls.length-1].url
 				});
 
-			} else if ( content.length )
-				content = content.replace(/<!--MS-->.*<!--ME-->/g, '');
-
-			if ( data.tooltip_class )
-				tip.element.classList.add(data.tooltip_class);
+			content = (<div>
+				<div class="ffz--shift-hide">
+					{content}
+					{url_notice ? <div class="tw-mg-t-05 tw-border-t tw-pd-t-05 tw-align-center">
+						{url_notice}
+						<div class=" tw-font-size-8">
+							{this.i18n.t('tooltip.shift-detail', '(Shift for Details)')}
+						</div>
+					</div> : null}
+				</div>
+				<div class="ffz--shift-show tw-align-left">
+					<div class="tw-semibold tw-mg-b-05 tw-align-center">
+						{this.i18n.t('tooltip.link.urls', 'Visited URLs')}
+					</div>
+					<table>{url_table}</table>
+				</div>
+			</div>);
 
 			return content;
 
-		}).catch(error =>
-			sanitize(this.i18n.t('tooltip.error', 'An error occurred. ({error})', {error}))
-		);
+		}).catch(error => {
+			console.error(error);
+			return sanitize(this.i18n.t('tooltip.error', 'An error occurred. ({error})', {error}))
+		});
 	},
 
 	process(tokens) {
 		if ( ! tokens || ! tokens.length )
 			return tokens;
+
+		//const use_new = this.experiments.getAssignment('new_links');
 
 		const out = [];
 		for(const token of tokens) {
@@ -112,26 +157,45 @@ export const Links = {
 				continue;
 			}
 
-			LINK_REGEX.lastIndex = 0;
+			//LINK_REGEX.lastIndex = 0;
+			NEW_LINK_REGEX.lastIndex = 0;
 			const text = token.text;
 			let idx = 0, match;
 
-			while((match = LINK_REGEX.exec(text))) {
-				const nix = match.index + (match[1] ? match[1].length : 0);
+			//if ( use_new ) {
+			while((match = NEW_LINK_REGEX.exec(text))) {
+				const nix = match.index;
 				if ( idx !== nix )
 					out.push({type: 'text', text: text.slice(idx, nix)});
 
-				const is_mail = ! match[3] && match[2].indexOf('/') === -1 && match[2].indexOf('@') !== -1;
-
 				out.push({
 					type: 'link',
-					url: (match[3] ? '' : is_mail ? 'mailto:' : 'https://') + match[2],
-					is_mail,
-					text: match[2]
+					url: `${match[1] ? '' : 'https://'}${match[0]}`,
+					is_mail: false,
+					text: match[0]
 				});
 
-				idx = nix + match[2].length;
+				idx = nix + match[0].length;
 			}
+
+			/*} else {
+				while((match = LINK_REGEX.exec(text))) {
+					const nix = match.index + (match[1] ? match[1].length : 0);
+					if ( idx !== nix )
+						out.push({type: 'text', text: text.slice(idx, nix)});
+
+					const is_mail = ! match[3] && match[2].indexOf('/') === -1 && match[2].indexOf('@') !== -1;
+
+					out.push({
+						type: 'link',
+						url: (match[3] ? '' : is_mail ? 'mailto:' : 'https://') + match[2],
+						is_mail,
+						text: match[2]
+					});
+
+					idx = nix + match[2].length;
+				}
+			}*/
 
 			if ( idx < text.length )
 				out.push({type: 'text', text: text.slice(idx)});
@@ -150,7 +214,7 @@ Links.tooltip.interactive = function(target) {
 };
 
 Links.tooltip.delayHide = function(target) {
-	if ( ! this.context.get('tooltip.rich-links') || ! this.context.get('tooltip.link-interaction') || target.dataset.isMail === 'true' )
+	if ( ! this.context.get('tooltip.rich-links') || target.dataset.isMail === 'true' )
 		return 0;
 
 	return 64;
@@ -193,6 +257,61 @@ Links.tooltip.delayHide = function(target) {
 
 
 // ============================================================================
+// Replies (Styled Like Mentions)
+// ============================================================================
+
+export const Replies = {
+	type: 'reply',
+	priority: 0,
+
+	component: () => null,
+
+	render(token, createElement) {
+		let color = token.color;
+		if ( color ) {
+			const chat = this.resolve('site.chat');
+			color = chat ? chat.colors.process(color) : color;
+		}
+
+		return (<strong
+			class={`chat-line__message-mention ffz--pointer-events ffz-tooltip ffz--reply-mention ffz-i-threads${token.me ? ' ffz--mention-me' : ''}`}
+			style={{color}}
+			data-tooltip-type="reply"
+			data-login={token.recipient}
+			onClick={this.handleReplyClick}
+		>
+			{token.text}
+		</strong>)
+	},
+
+	tooltip(target) {
+		const fine = this.resolve('site.fine');
+		if ( ! target || ! fine )
+			return null;
+
+		const chat = fine.searchParent(target, n => n.props && n.props.reply && n.setOPCardTray),
+			reply = chat?.props?.reply;
+		if ( ! reply )
+			return null;
+
+		return [
+			createElement('strong', {}, this.i18n.t('chat.reply-to', 'Replying To:')),
+			'\n\n',
+			createElement('div', {className: 'tw-align-left'}, [
+				createElement('strong', {}, reply.parentDisplayName),
+				': ',
+				reply.parentMessageBody
+			])
+		];
+	},
+
+	process(tokens) {
+		return tokens;
+	}
+}
+
+
+// ============================================================================
 // Mentions
 // ============================================================================
 
@@ -209,8 +328,15 @@ export const Mentions = {
 	},
 
 	render(token, createElement) {
+		let color = token.color;
+		if ( color ) {
+			const chat = this.resolve('site.chat');
+			color = chat ? chat.colors.process(color) : color;
+		}
+
 		return (<strong
-			class={`chat-line__message-mention${token.me ? ' ffz--mention-me' : ''}`}
+			class={`chat-line__message-mention${token.me ? ' ffz--mention-me' : ''} ffz--pointer-events`}
+			style={{color}}
 			data-login={token.recipient}
 			onClick={this.handleMentionClick}
 		>
@@ -270,15 +396,21 @@ export const Mentions = {
 						mentioned = mentionable;
 					}
 
+					const rlower = recipient ? recipient.toLowerCase() : '',
+						color = this.color_cache ? this.color_cache.get(rlower) : null;
+
 					out.push({
 						type: 'mention',
 						text: `${at}${recipient}`,
 						me: mentioned,
-						recipient: recipient ? recipient.toLowerCase() : ''
+						color,
+						recipient: rlower
 					});
 
-					if ( mentioned )
+					if ( mentioned ) {
+						(msg.highlights = (msg.highlights || new Set())).add('mention');
 						msg.mentioned = true;
+					}
 
 					// Push the remaining text from the token.
 					text.push(segment.substr(match[0].length));
@@ -315,6 +447,7 @@ export const UserHighlights = {
 		const u = msg.user;
 		for(const [color, regex] of colors) {
 			if ( regex.test(u.login) || regex.test(u.displayName) ) {
+				(msg.highlights = (msg.highlights || new Set())).add('user');
 				msg.mentioned = true;
 				if ( color ) {
 					msg.mention_color = color;
@@ -371,6 +504,7 @@ export const BadgeHighlights = {
 		for(const badge of Object.keys(badges)) {
 			if ( colors.has(badge) ) {
 				const color = colors.get(badge);
+				(msg.highlights = (msg.highlights || new Set())).add('badge');
 				msg.mentioned = true;
 				if ( color ) {
 					msg.mention_color = color;
@@ -430,11 +564,35 @@ export const CustomHighlights = {
 		if ( user && user.login && user.login == msg.user.login && ! this.context.get('chat.filtering.process-own') )
 			return tokens;
 
-		const colors = this.context.get('chat.filtering.highlight-basic-terms--color-regex');
-		if ( ! colors || ! colors.size )
+		const data = this.context.get('chat.filtering.highlight-basic-terms--color-regex');
+		if ( ! data )
 			return tokens;
 
-		for(const [color, regex] of colors) {
+		if ( data.non ) {
+			for(const [color, regexes] of data.non) {
+				let matched = false;
+				if ( regexes[0] ) {
+					regexes[0].lastIndex = 0;
+					matched = regexes[0].test(msg.message);
+				}
+				if ( ! matched && regexes[1] ) {
+					regexes[1].lastIndex = 0;
+					matched = regexes[1].test(msg.message);
+				}
+
+				if ( matched ) {
+					(msg.highlights = (msg.highlights || new Set())).add('term');
+					msg.mentioned = true;
+					msg.mention_color = color || msg.mention_color;
+					break;
+				}
+			}
+		}
+
+		if ( ! data.hl )
+			return tokens;
+
+		for(const [color, regexes] of data.hl) {
 			const out = [];
 			for(const token of tokens) {
 				if ( token.type !== 'text' ) {
@@ -442,11 +600,23 @@ export const CustomHighlights = {
 					continue;
 				}
 
-				regex.lastIndex = 0;
 				const text = token.text;
 				let idx = 0, match;
 
-				while((match = regex.exec(text))) {
+				while(idx < text.length) {
+					if ( regexes[0] )
+						regexes[0].lastIndex = idx;
+					if ( regexes[1] )
+						regexes[1].lastIndex = idx;
+
+					match = regexes[0] ? regexes[0].exec(text) : null;
+					const second = regexes[1] ? regexes[1].exec(text) : null;
+					if ( second && (! match || match.index > second.index) )
+						match = second;
+
+					if ( ! match )
+						break;
+
 					const raw_nix = match.index,
 						offset = match[1] ? match[1].length : 0,
 						nix = raw_nix + offset;
@@ -454,8 +624,10 @@ export const CustomHighlights = {
 					if ( idx !== nix )
 						out.push({type: 'text', text: text.slice(idx, nix)});
 
+					(msg.highlights = (msg.highlights || new Set())).add('term');
 					msg.mentioned = true;
-					msg.mention_color = color || msg.mention_color;
+					if ( ! msg.mention_color )
+						msg.mention_color = color;
 
 					out.push({
 						type: 'highlight',
@@ -526,7 +698,7 @@ export const BlockedTerms = {
 		return (<strong
 			data-text={token.text}
 			data-tooltip-type="blocked"
-			class="ffz-tooltip ffz--blocked"
+			class="ffz-tooltip ffz--blocked ffz--pointer-events"
 			onClick={this.clickToReveal}
 		>
 			&times;&times;&times;
@@ -587,7 +759,7 @@ export const AutomoddedTerms = {
 			data-text={token.text}
 			data-categories={JSON.stringify(token.categories)}
 			data-tooltip-type="amterm"
-			class="ffz-tooltip ffz--blocked"
+			class="ffz-tooltip ffz--blocked ffz--pointer-events"
 			onClick={this.clickToReveal}
 		>
 			&times;&times;&times;
@@ -755,7 +927,7 @@ export const CheerEmotes = {
 
 	render(token, createElement) {
 		return (<span
-			class="ffz-cheer ffz-tooltip"
+			class="ffz-cheer ffz-tooltip ffz--pointer-events"
 			data-tooltip-type="cheer"
 			data-prefix={token.prefix}
 			data-amount={this.i18n.formatNumber(token.amount)}
@@ -923,9 +1095,10 @@ const render_emote = (token, createElement, wrapped) => {
 		emote = createElement('img', {
 			class: `${EMOTE_CLASS} ffz-tooltip${token.provider === 'ffz' ? ' ffz-emote' : token.provider === 'emoji' ? ' ffz-emoji' : ''}`,
 			attrs: {
-				src: token.src,
-				srcSet: token.srcSet,
+				src: token.big && token.src2 || token.src,
+				srcSet: token.big && token.srcSet2 || token.srcSet,
 				alt: token.text,
+				height: (token.big && ! token.can_big && token.height) ? `${token.height * 2}px` : undefined,
 				'data-tooltip-type': 'emote',
 				'data-provider': token.provider,
 				'data-id': token.id,
@@ -976,9 +1149,10 @@ export const AddonEmotes = {
 	render(token, createElement, wrapped) {
 		const mods = token.modifiers || [], ml = mods.length,
 			emote = (<img
-				class={`${EMOTE_CLASS} ffz-tooltip${token.provider === 'ffz' ? ' ffz-emote' : token.provider === 'emoji' ? ' ffz-emoji' : ''}`}
-				src={token.src}
-				srcSet={token.srcSet}
+				class={`${EMOTE_CLASS} ffz--pointer-events ffz-tooltip${token.provider === 'ffz' ? ' ffz-emote' : token.provider === 'emoji' ? ' ffz-emoji' : ''}`}
+				src={token.big && token.src2 || token.src}
+				srcSet={token.big && token.srcSet2 || token.srcSet}
+				height={(token.big && ! token.can_big && token.height) ? `${token.height * 2}px` : undefined}
 				alt={token.text}
 				data-tooltip-type="emote"
 				data-provider={token.provider}
@@ -999,7 +1173,7 @@ export const AddonEmotes = {
 		}
 
 		return (<div
-			class="ffz--inline modified-emote"
+			class="ffz--inline ffz--pointer-events modified-emote"
 			data-test-selector="emote-button"
 			data-provider={token.provider}
 			data-id={token.id}
@@ -1057,7 +1231,7 @@ export const AddonEmotes = {
 						});
 
 				} else if ( type === EmoteTypes.Prime || type === EmoteTypes.Turbo )
-					source = this.i18n.t('emote.prime', 'Twitch Prime');
+					source = this.i18n.t('emote.prime', 'Prime Gaming');
 
 				else if ( type === EmoteTypes.TwoFactor )
 					source = this.i18n.t('emote.2fa', 'Twitch 2FA Emote');
@@ -1116,7 +1290,7 @@ export const AddonEmotes = {
 			plain_name = true;
 			name = `:${emoji.names[0]}:${vcode ? `:${vcode.names[0]}:` : ''}`;
 
-			const category = emoji.category ? this.i18n.t(`emoji.category.${emoji.category.toSnakeCase()}`, emoji.category) : null;
+			const category = emoji.category ? this.i18n.t(`emoji.category.${emoji.category.toSnakeCase()}`, CATEGORIES[emoji.category] || emoji.category) : null;
 			source = this.i18n.t('tooltip.emoji', 'Emoji - {category}', {category});
 
 		} else
@@ -1157,15 +1331,17 @@ export const AddonEmotes = {
 			return tokens;
 
 		const emotes = this.emotes.getEmotes(
-				msg.user.id,
-				msg.user.login,
-				msg.roomID,
-				msg.roomLogin
-			),
-			out = [];
+			msg.user.id,
+			msg.user.login,
+			msg.roomID,
+			msg.roomLogin
+		);
 
 		if ( ! emotes )
 			return tokens;
+
+		const big = this.context.get('chat.emotes.2x'),
+			out = [];
 
 		let last_token, emote;
 		for(const token of tokens) {
@@ -1173,8 +1349,10 @@ export const AddonEmotes = {
 				continue;
 
 			if ( token.type !== 'text' ) {
-				if ( token.type === 'emote' && ! token.modifiers )
-					token.modifiers = [];
+				if ( token.type === 'emote' ) {
+					if ( ! token.modifiers )
+						token.modifiers = [];
+				}
 
 				out.push(token);
 				last_token = token;
@@ -1189,8 +1367,14 @@ export const AddonEmotes = {
 
 					// Is this emote a modifier?
 					if ( emote.modifier && last_token && last_token.modifiers && (!text.length || (text.length === 1 && text[0] === '')) ) {
-						if ( last_token.modifiers.indexOf(emote.token) === -1 )
-							last_token.modifiers.push(emote.token);
+						if ( last_token.modifiers.indexOf(emote.token) === -1 ) {
+							if ( big )
+								last_token.modifiers.push(Object.assign({
+									big
+								}, emote.token));
+							else
+								last_token.modifiers.push(emote.token);
+						}
 
 						continue;
 					}
@@ -1205,7 +1389,10 @@ export const AddonEmotes = {
 						text = [];
 					}
 
-					const t = Object.assign({modifiers: []}, emote.token);
+					const t = Object.assign({
+						modifiers: [],
+						big
+					}, emote.token);
 					out.push(t);
 					last_token = t;
 
@@ -1215,8 +1402,10 @@ export const AddonEmotes = {
 					text.push(segment);
 			}
 
-			if ( text.length > 1 || (text.length === 1 && text[0] !== '') )
-				out.push({type: 'text', text: text.join(' ')});
+			if ( text.length > 1 || (text.length === 1 && text[0] !== '') ) {
+				const t = {type: 'text', text: text.join(' ')};
+				out.push(t);
+			}
 		}
 
 		return out;
@@ -1311,6 +1500,8 @@ export const TwitchEmotes = {
 			return tokens;
 
 		const data = msg.ffz_emotes,
+			big = this.context.get('chat.emotes.2x'),
+			use_replacements = this.context.get('chat.fix-bad-emotes'),
 			emotes = [];
 
 		for(const emote_id in data)
@@ -1382,15 +1573,21 @@ export const TwitchEmotes = {
 					});
 
 				let src, srcSet;
+				let src2, srcSet2;
 
 				const replacement = REPLACEMENTS[e_id];
-				if ( replacement && this.context.get('chat.fix-bad-emotes') ) {
+				if ( replacement && use_replacements ) {
 					src = `${REPLACEMENT_BASE}${replacement}`;
 					srcSet = '';
 
 				} else {
 					src = `${TWITCH_EMOTE_BASE}${e_id}/1.0`;
 					srcSet = `${TWITCH_EMOTE_BASE}${e_id}/1.0 1x, ${TWITCH_EMOTE_BASE}${e_id}/2.0 2x`;
+
+					if ( big ) {
+						src2 = `${TWITCH_EMOTE_BASE}${e_id}/2.0`;
+						srcSet2 = `${TWITCH_EMOTE_BASE}${e_id}/2.0 1x, ${TWITCH_EMOTE_BASE}${e_id}/3.0 2x`;
+					}
 				}
 
 				out.push({
@@ -1399,6 +1596,9 @@ export const TwitchEmotes = {
 					provider: 'twitch',
 					src,
 					srcSet,
+					src2,
+					srcSet2,
+					big,
 					text: text.slice(e_start - t_start, e_end - t_start).join(''),
 					modifiers: []
 				});

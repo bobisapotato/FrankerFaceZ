@@ -4,7 +4,7 @@
 // Advanced Filter System
 // ============================================================================
 
-export function createTester(rules, filter_types, inverted = false, or = false) {
+export function createTester(rules, filter_types, inverted = false, or = false, rebuild) {
 	if ( ! Array.isArray(rules) || ! filter_types )
 		return inverted ? () => false : () => true;
 
@@ -17,11 +17,17 @@ export function createTester(rules, filter_types, inverted = false, or = false) 
 			continue;
 
 		const type = filter_types[rule.type];
-		if ( ! type )
+		if ( ! type ) {
+			// Default to false if we cannot find a rule type.
+			// Just to be safe.
+			i++;
+			tests.push(() => false);
+			names.push(`f${i}`);
 			continue;
+		}
 
 		i++;
-		tests.push(type.createTest(rule.data, filter_types));
+		tests.push(type.createTest(rule.data, filter_types, rebuild));
 		names.push(`f${i}`);
 	}
 

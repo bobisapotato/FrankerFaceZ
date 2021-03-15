@@ -197,7 +197,7 @@ export function deep_equals(object, other, ignore_undefined = false, seen, other
 	const source_keys = Object.keys(object),
 		dest_keys = Object.keys(other);
 
-	if ( ! ignore_undefined && ! array_equals(source_keys, dest_keys) )
+	if ( ! ignore_undefined && ! set_equals(new Set(source_keys), new Set(dest_keys)) )
 		return false;
 
 	for(const key of source_keys)
@@ -216,10 +216,14 @@ export function deep_equals(object, other, ignore_undefined = false, seen, other
 
 
 export function shallow_object_equals(a, b) {
-	if ( typeof a !== 'object' || typeof b !== 'object' || ! array_equals(Object.keys(a), Object.keys(b)) )
+	if ( typeof a !== 'object' || typeof b !== 'object' )
 		return false;
 
-	for(const key in a)
+	const keys = Object.keys(a);
+	if ( ! set_equals(new Set(keys), new Set(Object.keys(b))) )
+		return false;
+
+	for(const key of keys)
 		if ( a[key] !== b[key] )
 			return false;
 
@@ -496,10 +500,28 @@ export function glob_to_regex(input) {
 		if ( CONTROL_CHARS.includes(char) )
 			output += `\\${char}`;
 
-		else if ( char === '?' )
+		else if ( char === '\\' ) {
+			i++;
+			const next = input[i];
+			if ( next ) {
+				if ( CONTROL_CHARS.includes(next) )
+					output += `\\${next}`;
+				else
+					output += next;
+			}
+
+		} else if ( char === '?' )
 			output += '.';
 
-		else if ( char === '[' || char === ']' )
+		else if ( char === '[' ) {
+			output += char;
+			const next = input[i + 1];
+			if ( next === '!' ) {
+				i++;
+				output += '^';
+			}
+
+		} else if ( char === ']' )
 			output += char;
 
 		else if ( char === '{' ) {
@@ -525,18 +547,75 @@ export function glob_to_regex(input) {
 			if ( count > 1 )
 				output += '.*?';
 			else
-				output += '[^ ]*?';
+				output += '[^\\s]*?';
 
 		} else
 			output += char;
 	}
 
-	while(groups > 0) {
+	/*while(groups > 0) {
 		output += ')';
 		groups--;
-	}
+	}*/
 
 	return output;
+}
+
+
+/**
+ * Truncate a string. Tries to intelligently break the string in white-space
+ * if possible, without back-tracking. The returned string can be up to
+ * `ellipsis.length + target + overage` characters long.
+ * @param {String} str The string to truncate.
+ * @param {Number} target The target length for the result
+ * @param {Number} overage Accept up to this many additional characters for a better result
+ * @param {String} [ellipsis='…'] The string to append when truncating
+ * @param {Boolean} [break_line=true] If true, attempt to break at the first LF
+ * @param {Boolean} [trim=true] If true, runs trim() on the string before truncating
+ * @returns {String} The truncated string
+ */
+export function truncate(str, target = 100, overage = 15, ellipsis = '…', break_line = true, trim = true) {
+	if ( ! str || ! str.length )
+		return str;
+
+	if ( trim )
+		str = str.trim();
+
+	let idx = break_line ? str.indexOf('\n') : -1;
+	if ( idx === -1 || idx > target )
+		idx = target;
+
+	if ( str.length <= idx )
+		return str;
+
+	let out = str.slice(0, idx).trimRight();
+	if ( overage > 0 && out.length >= idx ) {
+		let next_space = str.slice(idx).search(/\s+/);
+		if ( next_space === -1 && overage + idx > str.length )
+			next_space = str.length - idx;
+
+		if ( next_space !== -1 && next_space <= overage ) {
+			if ( str.length <= (idx + next_space) )
+				return str;
+
+			out = str.slice(0, idx + next_space);
+		}
+	}
+
+	return out + ellipsis;
+}
+
+
+
+function decimalToHex(number) {
+	return number.toString(16).padStart(2, '0')
+}
+
+
+export function generateHex(length = 40) {
+	const arr = new Uint8Array(length / 2);
+	window.crypto.getRandomValues(arr);
+	return Array.from(arr, decimalToHex).join('')
 }
 
 

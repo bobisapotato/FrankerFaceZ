@@ -7,7 +7,7 @@
 import Module from 'utilities/module';
 
 import {createElement} from 'react';
-import { split_chars } from '../../../../utilities/object';
+import { split_chars } from 'utilities/object';
 
 
 export default class Line extends Module {

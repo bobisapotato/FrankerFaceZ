@@ -1,3 +1,8 @@
+// Fix: Unable to move emote/user cards out of chat
+.channel-root__right-column > div.tw-overflow-hidden {
+	overflow: unset !important;
+}
+
 .chat-line__message--emote {
 	vertical-align: middle;
 	margin: -.5rem 0;
@@ -6,6 +11,10 @@
 .chat-author__display-name,
 .chat-author__intl-login {
 	cursor: pointer;
+}
+
+.ffz--pointer-events {
+	pointer-events: all;
 }
 
 .ffz--freeze-indicator {
@@ -24,6 +33,29 @@
 .chat-settings__content div[data-test-selector="high-contrast-selector"] {
 	display: none;
 }
+
+.chat-line__message-highlight {
+	pointer-events: none;
+}
+
+.chat-line__timestamp {
+	font-variant-numeric: tabular-nums;
+}
+
+.ffz-notice-line {
+	&:focus-within,
+	&:hover,
+	&:focus {
+		.chat-line__message-highlight {
+			background-color: var(--color-background-interactable-alpha-hover);
+		}
+
+		.chat-line__reply-icon {
+			display: block;
+		}
+	}
+}
+
 
 .autocomplete-balloon {
 	.autocomplete-balloon__item {
@@ -50,11 +82,44 @@
 	pointer-events: none;
 }
 
+.chat-line__reply-icon {
+	right: 0.5rem !important;
+	top: -1rem !important;
+}
+
+.ffz--reply-mention {
+	padding: 0.25rem 0.5rem;
+	border-radius: 1rem;
+	white-space: nowrap;
+
+	&:before {
+		font-size: 1.2em;
+		vertical-align: middle;
+		color: var(--color-text-base);
+	}
+
+	background-color: rgba(0,0,0,0.15);
+
+	.tw-root--theme-dark & {
+		background-color: rgba(255,255,255,0.15);
+	}
+
+	&:hover, &:focus {
+		text-decoration: none;
+		background-color: var(--color-background-button-hover);
+		color: var(--color-text-button-hover) !important;
+	}
+}
+
 .ffz--chat-card {
 	.vod-message & {
 		.ffz--card-text {
 			max-width: 18rem;
 		}
+	}
+
+	.ffz-accent-card {
+		border-right: .5rem solid var(--ffz-color-accent);
 	}
 
 	.chat-card__title {
@@ -87,6 +152,12 @@
 .ffz-mod-icon {
 	text-align: center;
 	display: inline-flex;
+	font-size: 1.6rem;
+	font-size: var(--ffz-chat-actions-size);
+
+	&, &.mod-icon {
+		height: unset;
+	}
 
 	&.disabled {
 		cursor: not-allowed;
@@ -117,11 +188,13 @@
 	span {
 		display: inline-block;
 		min-width: 1.6rem;
+		min-width: var(--ffz-chat-actions-size);
 		font-weight: bold;
 	}
 
 	.mod-icon__image img {
 		max-height: 1.6rem;
+		max-height: var(--ffz-chat-actions-size);
 	}
 
 	&.colored,
@@ -130,7 +203,7 @@
 	}
 
 	.ffz--action &,
-	.tw-interactable:hover &:not(.disabled),
+	.ffz-interactable:hover &:not(.disabled),
 	&:not(.disabled):hover {
 		.tw-root--theme-dark &, & {
 			&.tw-c-text-alt-2 {
@@ -144,12 +217,6 @@
 		}
 	}
 }
-
-
-.ffz--inline {
-	display: inline;
-}
-
 
 .ffz--giftee-name {
 	cursor: pointer;
@@ -270,7 +337,7 @@
 	}
 
 	.ffz--emoji-tone-picker {
-		.tw-balloon {
+		.ffz-balloon {
 			min-width: unset;
 		}
 
@@ -305,14 +372,14 @@
 			}
 		}
 
-		&.locked {
-			cursor: not-allowed;
-
+		&.locked,
+		&.emote-hidden {
 			img {
 				opacity: 0.5;
 			}
 
-			.ffz-i-lock {
+			.ffz-i-lock,
+			.ffz-i-eye-off {
 				position: absolute;
 				bottom: 0; right: 0;
 				border-radius: .2rem;
@@ -320,7 +387,10 @@
 				background-color: rgba(0,0,0,0.5);
 				color: #fff;
 			}
+		}
 
+		&.locked {
+			cursor: not-allowed;
 		}
 	}
 

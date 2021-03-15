@@ -13,13 +13,17 @@ const ATTRS = [
 	'hidden', 'high', 'href', 'hreflang', 'http-equiv', 'icon', 'id',
 	'integrity', 'ismap', 'itemprop', 'keytype', 'kind', 'label', 'lang',
 	'language', 'list', 'loop', 'low', 'manifest', 'max', 'maxlength',
-	'minlength', 'media', 'method', 'min', 'multiple', 'muted', 'name',
+	'minlength', 'media', 'method', 'min', 'multiple', 'name',
 	'novalidate', 'open', 'optimum', 'pattern', 'ping', 'placeholder', 'poster',
 	'preload', 'radiogroup', 'readonly', 'rel', 'required', 'reversed', 'rows',
 	'rowspan', 'sandbox', 'scope', 'scoped', 'seamless', 'selected', 'shape',
 	'size', 'sizes', 'slot', 'span', 'spellcheck', 'src', 'srcdoc', 'srclang',
 	'srcset', 'start', 'step', 'style', 'summary', 'tabindex', 'target',
 	'title', 'type', 'usemap', 'value', 'width', 'wrap'
+];
+
+const BOOLEAN_ATTRS = [
+	'controls', 'autoplay', 'loop'
 ];
 
 
@@ -79,7 +83,9 @@ export function findReactFragment(frag, criteria, depth = 25, current = 0, visit
 export function createElement(tag, props, ...children) {
 	const el = document.createElement(tag);
 
-	if ( children.length === 1)
+	if ( children.length === 0)
+		children = null;
+	else if ( children.length === 1)
 		children = children[0];
 
 	if ( typeof props === 'string' )
@@ -95,8 +101,12 @@ export function createElement(tag, props, ...children) {
 						el.style.cssText = prop;
 					else
 						for(const k in prop)
-							if ( has(prop, k) )
-								el.style[k] = prop[k];
+							if ( has(prop, k) ) {
+								if ( has(el.style, k) || has(Object.getPrototypeOf(el.style), k) )
+									el.style[k] = prop[k];
+								else
+									el.style.setProperty(k, prop[k]);
+							}
 
 				} else if ( lk === 'dataset' ) {
 					for(const k in prop)
@@ -114,11 +124,15 @@ export function createElement(tag, props, ...children) {
 				else if ( lk.startsWith('data-') )
 					el.dataset[camelCase(lk.slice(5))] = prop;
 
-				else if ( lk.startsWith('aria-') || ATTRS.includes(lk) )
+				else if ( BOOLEAN_ATTRS.includes(lk) ) {
+					if ( prop && prop !== 'false' )
+						el.setAttribute(key, prop);
+
+				} else if ( lk.startsWith('aria-') || ATTRS.includes(lk) )
 					el.setAttribute(key, prop);
 
 				else
-					el[key] = props[key];
+					el[key] = prop;
 			}
 
 	if ( children )
@@ -189,9 +203,29 @@ export function openFile(contentType, multiple) {
 		input.accept = contentType;
 		input.multiple = multiple;
 
+		let resolved = false;
+
+		// TODO: Investigate this causing issues
+		// for some users.
+		/*const focuser = () => {
+			off(window, 'focus', focuser);
+			setTimeout(() => {
+				if ( ! resolved ) {
+					resolved = true;
+					resolve(multiple ? [] : null);
+				}
+			}, 5000);
+		};
+
+		on(window, 'focus', focuser);*/
+
 		input.onchange = () => {
-			const files = Array.from(input.files);
-			resolve(multiple ? files : files[0])
+			//off(window, 'focus', focuser);
+			if ( ! resolved ) {
+				resolved = true;
+				const files = Array.from(input.files);
+				resolve(multiple ? files : files[0])
+			}
 		}
 
 		input.click();

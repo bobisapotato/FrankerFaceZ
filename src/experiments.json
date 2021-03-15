@@ -3,8 +3,16 @@
 		"name": "New API Stress Testing",
 		"description": "Send duplicate requests to the new API server for load testing.",
 		"groups": [
-			{"value": true, "weight": 50},
-			{"value": false, "weight": 50}
+			{"value": true, "weight": 0},
+			{"value": false, "weight": 100}
+		]
+	},
+	"api_links": {
+		"name": "API-Based Link Lookups",
+		"description": "Use the new API to look up links instead of the socket cluster.",
+		"groups": [
+			{"value": true, "weight": 30},
+			{"value": false, "weight": 70}
 		]
 	}
 }

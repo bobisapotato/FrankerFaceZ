@@ -10,15 +10,9 @@ export default class BaseSite extends Module {
 		super(...args);
 		this._id = `_ffz$${last_site++}`;
 
-		this.inject('settings');
+		//this.inject('settings');
 
 		this.log.info(`Using: ${this.constructor.name}`);
-	}
-
-	populateModules() {
-		const ctx = require.context('site/modules', true, /(?:^(?:\.\/)?[^/]+|index)\.jsx?$/);
-		const modules = this.populate(ctx, this.log);
-		this.log.info(`Loaded descriptions of ${Object.keys(modules).length} modules.`);
 	}
 
 

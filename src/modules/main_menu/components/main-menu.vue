@@ -11,7 +11,7 @@
 				<div class="tw-search-input">
 					<label for="ffz-main-menu.search" class="tw-hide-accessible">{{ t('main-menu.search', 'Search Settings') }}</label>
 					<div class="tw-relative">
-						<div class="tw-absolute tw-align-items-center tw-c-text-alt-2 tw-flex tw-full-height tw-input__icon tw-justify-content-center tw-left-0 tw-top-0 tw-z-default">
+						<div class="tw-absolute tw-align-items-center tw-c-text-alt-2 tw-flex tw-full-height ffz-input__icon tw-justify-content-center tw-left-0 tw-top-0 tw-z-default">
 							<figure class="ffz-i-search" />
 						</div>
 						<input
@@ -19,7 +19,7 @@
 							v-model="query"
 							:placeholder="t('main-menu.search', 'Search Settings')"
 							type="search"
-							class="tw-block tw-border-radius-medium tw-font-size-6 tw-full-width tw-input tw-pd-l-3 tw-pd-r-1 tw-pd-y-05"
+							class="tw-block tw-border-radius-medium tw-font-size-6 tw-full-width ffz-input tw-pd-l-3 tw-pd-r-1 tw-pd-y-05"
 							autocapitalize="off"
 							autocorrect="off"
 							autocomplete="off"
@@ -33,7 +33,7 @@
 					<figure :class="faded ? 'ffz-i-eye-off' : 'ffz-i-eye'" />
 				</span>
 			</button>
-			<button v-if="!exclusive" class="tw-button-icon tw-mg-x-05 tw-relative tw-tooltip-wrapper" @click="popout">
+			<button v-if="!exclusive" class="tw-button-icon tw-mg-x-05 tw-relative tw-tooltip__container" @click="popout">
 				<span class="tw-button-icon__icon">
 					<figure class="ffz-i-link-ext" />
 				</span>
@@ -110,6 +110,7 @@
 					:context="context"
 					:item="currentItem"
 					:filter="filter"
+					:nav_keys="nav_keys"
 					@change-item="changeItem"
 					@mark-seen="markSeen"
 					@navigate="navigate"
@@ -193,7 +194,28 @@ export default {
 
 			this.markSeen(item);
 
+			if ( item.redirect )
+				return this.navigate(Array.isArray(item.redirect) ? item.redirect : item.redirect.split(/\./g));
+
 			this.currentItem = item;
+			this.restoredItem = true;
+
+			let url;
+			if ( this.exclusive ) {
+				url = new URL(location.href);
+				url.searchParams.set('ffz-settings', item.full_key);
+				url = url.toString();
+			}
+
+			try {
+				window.history.replaceState({
+					...window.history.state,
+					ffzcc: item.full_key
+				}, document.title, url);
+			} catch(err) {
+				/* no-op */
+			}
+
 			let current = item;
 			while(current = current.parent) // eslint-disable-line no-cond-assign
 				current.expanded = true;
@@ -240,13 +262,45 @@ export default {
 					break;
 			}
 
-			while(item && item.page)
+			const tabs = [];
+
+			while(item && item.page) {
+				if ( item.tab && item.parent?.tabs )
+					tabs.push([item.parent, item.parent.tabs.indexOf(item)]);
+
 				item = item.parent;
+			}
 
 			if ( ! item )
 				return;
 
+			if ( this.$refs.page && this.$refs.page.onBeforeChange ) {
+				if ( this.$refs.page.onBeforeChange(this.currentItem, item) === false )
+					return;
+			}
+
 			this.changeItem(item);
+
+			// Asynchronously walk down the tab tree, so that
+			// we can switch every tab correctly.
+			if ( tabs.length ) {
+				const bits = () => {
+					const latest = tabs.pop();
+					if ( latest?.[0]?._component )
+						latest[0]._component.select(latest[1]);
+
+					if ( tabs.length )
+						this.$nextTick(bits);
+				}
+
+				this.$nextTick(bits);
+			}
+
+			this.$nextTick(() => {
+				const el = this.$el.querySelector(`.ffz--menu-tree li[data-key="${item.full_key}"]`);
+				if ( el )
+					el.scrollIntoView();
+			});
 		}
 	}
 }

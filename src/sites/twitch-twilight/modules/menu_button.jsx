@@ -18,15 +18,19 @@ export default class MenuButton extends SiteModule {
 		this.inject('i18n');
 		this.inject('settings');
 		this.inject('site.fine');
+		this.inject('site.elemental');
 		//this.inject('addons');
+
+		this.pauseToasts = this.pauseToasts.bind(this);
+		this.unpauseToasts = this.unpauseToasts.bind(this);
 
 		this.should_enable = true;
 		this._pill_content = null;
 		this._has_update = false;
 		this._important_update = false;
 		this._new_settings = 0;
-		this._error = null;
 		this._loading = false;
+		this.toasts = [];
 
 		this.settings.add('ffz.show-new-settings', {
 			default: true,
@@ -44,10 +48,16 @@ export default class MenuButton extends SiteModule {
 			['mod-view']
 		);
 
-		this.SunlightDash = this.fine.define(
+		/*this.SunlightDash = this.fine.define(
 			'sunlight-dash',
 			n => n.getIsChannelEditor && n.getIsChannelModerator && n.getIsAdsEnabled && n.getIsSquadStreamsEnabled,
 			Twilight.SUNLIGHT_ROUTES
+		);*/
+
+		this.SunlightNav = this.elemental.define(
+			'sunlight-nav', '.sunlight-top-nav > .tw-flex > .tw-flex > .tw-justify-content-end > .tw-flex',
+			Twilight.SUNLIGHT_ROUTES,
+			{attributes: true}, 1
 		);
 
 		this.NavBar = this.fine.define(
@@ -77,22 +87,6 @@ export default class MenuButton extends SiteModule {
 			return;
 
 		this._loading = val;
-		this.update();
-	}
-
-	get has_error() {
-		return this._error != null;
-	}
-
-	get error() {
-		return this._error;
-	}
-
-	set error(val) {
-		if ( val === this._error )
-			return;
-
-		this._error = val;
 		this.update();
 	}
 
@@ -161,6 +155,9 @@ export default class MenuButton extends SiteModule {
 		if ( this.has_update )
 			return null;
 
+		if ( this.settings.disable_profiles )
+			return <figure class="ffz-i-cog" />;
+
 		if ( this.has_strings )
 			return this.i18n.formatNumber(this.i18n.new_strings + this.i18n.changed_strings);
 
@@ -178,6 +175,30 @@ export default class MenuButton extends SiteModule {
 		return null;
 	}
 
+	updateToasts() {
+		requestAnimationFrame(() => this._updateToasts());
+	}
+
+	_updateToasts() {
+		for(const inst of this.NavBar.instances)
+			this.updateButtonToast(inst);
+
+		for(const inst of this.SquadBar.instances)
+			this.updateButtonToast(inst);
+
+		for(const inst of this.MultiController.instances)
+			this.updateButtonToast(inst);
+
+		//for(const inst of this.SunlightDash.instances)
+		//	this.updateButtonToast(inst);
+
+		for(const el of this.SunlightNav.instances)
+			this.updateButtonToast(null, el, true);
+
+		for(const inst of this.ModBar.instances)
+			this.updateButtonToast(inst);
+	}
+
 	update() {
 		requestAnimationFrame(() => this._update());
 	}
@@ -192,8 +213,11 @@ export default class MenuButton extends SiteModule {
 		for(const inst of this.MultiController.instances)
 			this.updateButton(inst);
 
-		for(const inst of this.SunlightDash.instances)
-			this.updateButton(inst);
+		//for(const inst of this.SunlightDash.instances)
+		//	this.updateButton(inst);
+
+		for(const el of this.SunlightNav.instances)
+			this.updateButton(null, el, true);
 
 		for(const inst of this.ModBar.instances)
 			this.updateButton(inst);
@@ -213,9 +237,13 @@ export default class MenuButton extends SiteModule {
 		this.MultiController.on('mount', this.updateButton, this);
 		this.MultiController.on('update', this.updateButton, this);
 
-		this.SunlightDash.ready(() => this.update());
+		/*this.SunlightDash.ready(() => this.update());
 		this.SunlightDash.on('mount', this.updateButton, this);
-		this.SunlightDash.on('update', this.updateButton, this);
+		this.SunlightDash.on('update', this.updateButton, this);*/
+
+		this.SunlightNav.on('mount', el => this.updateButton(null, el, true));
+		this.SunlightNav.on('mutate', el => this.updateButton(null, el, true));
+		this.SunlightNav.each(el => this.updateButton(null, el, true));
 
 		this.ModBar.ready(() => this.update());
 		this.ModBar.on('mount', this.updateButton, this);
@@ -229,13 +257,213 @@ export default class MenuButton extends SiteModule {
 		this.on('i18n:changed-strings', this.update);
 		this.on('i18n:update', this.update);
 		this.on('addons:data-loaded', this.update);
+		this.on('settings:change-provider', () => {
+			this.addError('site.menu_button.changed',
+				'The FrankerFaceZ settings provider has changed. Please refresh this tab to avoid strange behavior.'
+			);
+			this.update()
+		});
 	}
 
-	updateButton(inst) {
+
+	addError(i18n, text, icon = 'ffz-i-attention') {
+		this.addToast({
+			icon,
+			text_i18n: i18n,
+			text
+		});
+	}
+
+
+	addToast(data) {
+		/*if ( ! data.id )
+			data.id = generateUUID();*/
+
+		this.toasts.push(data);
+		// TODO: Sort by ending time?
+		if ( this.toasts.length > 5 )
+			return;
+
+		this.updateToasts();
+	}
+
+
+	pauseToasts() {
+		const length = Math.min(5, this.toasts.length),
+			now = performance.now();
+
+		this._toasts_paused = true;
+
+		for(let i=0; i < length; i++) {
+			const toast = this.toasts[i];
+			if ( ! toast || ! toast.started )
+				continue;
+
+			if ( toast._timer ) {
+				clearTimeout(toast._timer);
+				toast._timer = null;
+			}
+
+			const elapsed = now - toast.started,
+				remaining = toast.timeout - elapsed;
+
+			toast.remaining = remaining;
+			toast.percentage = 100 * remaining / toast.timeout;
+
+			if ( toast.el )
+				toast.el.replaceWith(this.renderToast(toast));
+		}
+	}
+
+
+	unpauseToasts() {
+		const length = Math.min(5, this.toasts.length),
+			now = performance.now();
+		this._toasts_paused = false;
+
+		for(let i=0; i < length; i++) {
+			const toast = this.toasts[i];
+			if ( ! toast || ! toast.started )
+				continue;
+
+			if ( toast.remaining ) {
+				const elapsed = toast.timeout - toast.remaining;
+				toast.started = now - elapsed;
+			}
+
+			if ( toast.el )
+				toast.el.replaceWith(this.renderToast(toast));
+		}
+	}
+
+
+	renderToasts() {
+		const length = Math.min(5, this.toasts.length);
+		if ( ! length )
+			return null;
+
+		const out = [];
+		for(let i=0; i < length; i++) {
+			out.push(this.renderToast(this.toasts[i]));
+		}
+
+		return out;
+	}
+
+
+	renderToast(data) {
+		if ( ! data._remove )
+			data._remove = () => {
+				if ( data._timer ) {
+					clearTimeout(data._timer);
+					data._timer = null;
+				}
+
+				data.el = null;
+
+				const idx = this.toasts.indexOf(data);
+				if ( idx !== -1 ) {
+					this.toasts.splice(idx, 1);
+					if ( ! this.toasts.length )
+						this._toasts_paused = false;
+
+					this.updateToasts();
+				}
+			}
+
+		let progress_bar = null;
+
+		if ( data.timeout ) {
+			const now = performance.now();
+			if ( ! data.started )
+				data.started = now;
+
+			const elapsed = now - data.started,
+				remaining = data.timeout - elapsed;
+			let percentage;
+
+			if ( this._toasts_paused )
+				percentage = data.percentage;
+
+			else if ( ! data._timer )
+				data._timer = setTimeout(data._remove, remaining);
+
+			if ( percentage == null )
+				percentage = data.percentage = 100 * remaining / data.timeout;
+
+			progress_bar = (<div class="ffz-toast--progress tw-absolute tw-overflow-hidden tw-z-below">
+				<div
+					class="tw-border-radius-rounded tw-progress-bar tw-progress-bar--countdown tw-progress-bar--default tw-progress-bar--mask"
+					role="progressbar"
+					aria-valuenow={percentage}
+					aria-valuemin="0"
+					aria-valuemax="100"
+				>
+					<div
+						class={`tw-block tw-border-bottom-left-radius-rounded tw-border-top-left-radius-rounded tw-progress-bar__fill`}
+						data-a-target="tw-progress-bar-animation"
+						style={{
+							width: `${percentage}%`,
+							'animation-duration': `${remaining / 1000}s`
+						}}
+					></div>
+				</div>
+			</div>);
+		}
+
+		data.el = (<div class={`ffz-toast ffz-balloon ffz-balloon--lg tw-mg-y-1${this._toasts_paused ? ' ffz-toast--paused' : ''}`}>
+			<div class="tw-pd-1 tw-border-radius-large tw-c-background-base tw-c-text-inherit tw-elevation-4 tw-relative">
+				<div class="tw-flex tw-align-items-start">
+					{data.icon && (
+						typeof data.icon === 'string' ?
+							<figure class={`tw-font-size-3 tw-pd-r-1 ${data.icon}`} /> :
+							data.icon
+					)}
+					{ data.render ? data.render.call(this, data) : null }
+					{ (data.title || data.text) ? (<div class="tw-flex-grow-1">
+						{ data.title ? (<header class="tw-semibold tw-font-size-3 tw-pd-b-05">
+							{ data.title_i18n ? this.i18n.tList(data.title_i18n, data.title, data) : data.title}
+						</header>) : null }
+						{ data.text ? (<span class={`${data.lines ? 'ffz--line-clamp' : ''}`} style={{'--ffz-lines': data.lines}}>
+							{ data.text_i18n ? this.i18n.tList(data.text_i18n, data.text, data) : data.text}
+						</span>) : null }
+					</div>) : null}
+					{ ! data.unclosable && (<button
+						class="tw-button-icon tw-mg-l-05 tw-relative tw-tooltip__container"
+						onClick={data._remove}
+					>
+						<span class="tw-button-icon__icon">
+							<figure class="ffz-i-cancel" />
+						</span>
+					</button>)}
+				</div>
+				{progress_bar}
+			</div>
+		</div>);
+
+		return data.el;
+	}
+
+
+	updateButtonToast(inst, container, is_sunlight) {
+		const toast_el = (inst || container)._ffz_toast_el;
+		if ( toast_el ) {
+			toast_el.innerHTML = '';
+			setChildren(toast_el, this.renderToasts(), false, true);
+			return;
+		}
+
+		this.updateButton(inst, container, is_sunlight);
+	}
+
+
+	updateButton(inst, container, is_sunlight) {
 		const root = this.fine.getChildNode(inst);
 		let is_squad = false,
-			is_sunlight = false,
-			is_mod = false,
+			//is_sunlight = false,
+			is_mod = false;
+
+		if ( ! container )
 			container = root && root.querySelector('.top-nav__menu');
 
 		if ( ! container ) {
@@ -255,7 +483,7 @@ export default class MenuButton extends SiteModule {
 		}
 
 		if ( ! container && inst.getIsAdsEnabled ) {
-			container = root && root.querySelector('.sunlight-top-nav > .tw-flex');
+			container = root && root.querySelector('.sunlight-top-nav > .tw-flex > .tw-flex > .tw-justify-content-end > .tw-flex');
 			if ( container )
 				is_sunlight = true;
 		}
@@ -269,7 +497,7 @@ export default class MenuButton extends SiteModule {
 		if ( ! container )
 			return;
 
-		if ( ! is_squad && ! is_mod ) {
+		if ( ! is_squad && ! is_mod && ! is_sunlight ) {
 			let user_stuff = null;
 			try {
 				user_stuff = container.querySelector(':scope > .tw-justify-content-end:last-child');
@@ -286,15 +514,16 @@ export default class MenuButton extends SiteModule {
 			el.remove();
 
 		const addons = this.resolve('addons'),
+			toasts = this.renderToasts(),
 			pill = this.formatPill(),
 			extra_pill = this.formatExtraPill();
 
 		el = (<div
 			class={`ffz-top-nav ${is_mod ? 'ffz-mod-view-button tw-relative tw-mg-b-1' : `tw-align-self-center tw-flex-grow-0 tw-flex-nowrap tw-flex-shrink-0 tw-relative ${is_sunlight ? 'tw-mg-l-05 tw-mg-r-2' : 'tw-mg-x-05'}`}`}
 		>
-			<div class="tw-inline-flex tw-relative tw-tooltip-wrapper">
+			<div class="tw-inline-flex tw-relative tw-tooltip__container">
 				{btn = (<button
-					class={`tw-align-items-center tw-align-middle tw-border-bottom-left-radius-medium tw-border-bottom-right-radius-medium tw-border-top-left-radius-medium tw-border-top-right-radius-medium tw-button-icon tw-core-button tw-core-button--border tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden tw-relative${this.loading ? ' loading' : ''}`}
+					class={`tw-align-items-center tw-align-middle tw-border-bottom-left-radius-medium tw-border-bottom-right-radius-medium tw-border-top-left-radius-medium tw-border-top-right-radius-medium tw-button-icon ffz-core-button ffz-core-button--border tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden tw-relative${this.loading ? ' loading' : ''}`}
 					onClick={e => this.handleClick(e, btn)} // eslint-disable-line react/jsx-no-bind
 					onContextMenu={e => this.renderContext(e, btn)} // eslint-disable-line react/jsx-no-bind
 				>
@@ -304,27 +533,32 @@ export default class MenuButton extends SiteModule {
 						</span>
 					</div>
 				</button>)}
-				{this.has_error && (<div class={`tw-absolute tw-balloon tw-balloon--lg tw-block ${is_mod ? 'tw-tooltip--up tw-tooltip--align-left' : 'tw-tooltip--down tw-tooltip--align-right'}`}>
+				{this.has_error && (<div class={`tw-absolute ffz-balloon ffz-balloon--lg tw-block ${is_mod ? 'tw-tooltip--up tw-tooltip--align-left' : 'tw-tooltip--down tw-tooltip--align-right'}`}>
 					<div class="tw-border-radius-large tw-c-background-base tw-c-text-inherit tw-elevation-4 tw-pd-1">
 						<div class="tw-flex tw-align-items-center">
 							<div class="tw-flex-grow-1">
 								{ this.error.i18n ? this.i18n.t(this.error.i18n, this.error.text) : this.error.text }
 							</div>
-							<button
-								class="tw-button-icon tw-mg-l-05 tw-relative tw-tooltip-wrapper"
+							{this.error.permanent ? null : (<button
+								class="tw-button-icon tw-mg-l-05 tw-relative tw-tooltip__container"
 								onClick={() => this.error = null} // eslint-disable-line react/jsx-no-bind
 							>
 								<span class="tw-button-icon__icon">
 									<figure class="ffz-i-cancel" />
 								</span>
-							</button>
+							</button>)}
 						</div>
 					</div>
 				</div>)}
-				{! this.has_error && (<div class={`tw-tooltip ${is_mod ? 'tw-tooltip--up tw-tooltip--align-left' : 'tw-tooltip--down tw-tooltip--align-right'}`}>
+				<div class={`tw-tooltip ${is_mod ? 'tw-tooltip--up tw-tooltip--align-left' : 'tw-tooltip--down tw-tooltip--align-right'}`}>
 					{this.i18n.t('site.menu_button', 'FrankerFaceZ Control Center')}
 					{this.has_update && (<div class="tw-mg-t-1">
 						{this.i18n.t('site.menu_button.update-desc', 'There is an update available. Please refresh your page.')}
+					</div>)}
+					{this.settings.disable_profiles && (<div class="tw-mg-t-1">
+						{this.i18n.tList('site.menu_button.no-settings', 'Settings are disabled in this tab due to the inclusion of "{param}" in the URL.', {
+							param: <code class="ffz-monospace">?ffz-no-settings</code>
+						})}
 					</div>)}
 					{this._new_settings > 0 && (<div class="tw-mg-t-1">
 						{this.i18n.t('site.menu_button.new-desc', 'There {count,plural,one {is one new setting} other {are # new settings}}.', {count: this._new_settings})}
@@ -341,8 +575,15 @@ export default class MenuButton extends SiteModule {
 					{addons.has_dev && (<div class="tw-mg-t-1">
 						{this.i18n.t('site.menu_button.addon-dev-desc', 'You have loaded add-on data from a local development server.')}
 					</div>)}
-				</div>)}
+				</div>
 			</div>
+			{(inst || container)._ffz_toast_el = (<div
+				class={`ffz-toast--container tw-absolute tw-block ${is_mod ? 'tw-tooltip--up tw-tooltip--align-left' : 'tw-tooltip--down tw-tooltip--align-right'}`}
+				onmouseenter={this.pauseToasts}
+				onmouseleave={this.unpauseToasts}
+			>
+				{toasts}
+			</div>)}
 			{this.has_update && (<div class="ffz-menu__extra-pill tw-absolute">
 				<div class={`tw-pill ${this.important_update ? 'tw-pill--notification' : ''}`}>
 					<figure class="ffz-i-arrows-cw" />
@@ -362,8 +603,16 @@ export default class MenuButton extends SiteModule {
 
 		if ( is_mod )
 			container.insertBefore(el, container.firstElementChild);
-		else
-			container.insertBefore(el, container.lastElementChild);
+		else {
+			let before = container.lastElementChild;
+			if ( before && before.classList.contains('resize-detector') )
+				before = before.previousElementSibling;
+
+			if ( before )
+				container.insertBefore(el, before);
+			else
+				container.appendChild(el);
+		}
 
 		if ( this._ctx_open )
 			this.renderContext(null, btn);
@@ -426,7 +675,7 @@ export default class MenuButton extends SiteModule {
 
 		for(const profile of this.settings.__profiles) {
 			const toggle = (<button
-				class="tw-flex-shrink-0 tw-mg-r-1 tw-align-items-center tw-align-middle tw-border-radius-medium tw-button-icon tw-button-icon--secondary tw-core-button tw-core-button--border tw-inline-flex tw-interactive tw-justify-content-center tw-relative ffz-tooltip ffz-tooltip--no-mouse"
+				class="tw-flex-shrink-0 tw-mg-r-1 tw-align-items-center tw-align-middle tw-border-radius-medium tw-button-icon tw-button-icon--secondary ffz-core-button ffz-core-button--border tw-inline-flex tw-interactive tw-justify-content-center tw-relative ffz-tooltip ffz-tooltip--no-mouse"
 				data-title={this.renderButtonTip(profile)}
 				onClick={e => {  // eslint-disable-line react/jsx-no-bind
 					profile.toggled = ! profile.toggled;
@@ -434,8 +683,8 @@ export default class MenuButton extends SiteModule {
 					setChildren(toggle, this.renderButtonIcon(profile));
 					toggle.dataset.title = this.renderButtonTip(profile);
 
-					if ( toggle['_ffz_tooltip$0']?.rerender )
-						toggle['_ffz_tooltip$0'].rerender();
+					if ( toggle['_ffz_tooltip']?.rerender )
+						toggle['_ffz_tooltip'].rerender();
 
 					this.emit('tooltips:cleanup');
 
@@ -448,7 +697,7 @@ export default class MenuButton extends SiteModule {
 
 			const desc_key = profile.desc_i18n_key || profile.i18n_key && `${profile.i18n_key}.description`;
 
-			profiles.push(<div class="tw-relative tw-border-b tw-pd-y-05 tw-pd-l-1 tw-flex">
+			profiles.push(<div class="tw-relative tw-border-b tw-pd-y-05 tw-pd-x-1 tw-flex">
 				{toggle}
 				<div>
 					<h4>{ profile.i18n_key ? this.i18n.t(profile.i18n_key, profile.name, profile) : profile.name }</h4>
@@ -460,57 +709,59 @@ export default class MenuButton extends SiteModule {
 		}
 
 
-		ctx = (<div class={`tw-absolute tw-balloon tw-balloon--lg ${is_mod ? 'tw-balloon--up tw-balloon--left' : 'tw-balloon--down tw-balloon--right'} tw-block ffz--menu-context`}>
-			<div class="tw-border-radius-large tw-c-background-base tw-c-text-inherit tw-elevation-4">
-				<div class="tw-c-text-base tw-elevation-1 tw-flex tw-flex-shrink-0 tw-pd-x-1 tw-pd-y-05 tw-popover-header">
-					<div class="tw-flex tw-flex-column tw-justify-content-center tw-mg-l-05 tw-popover-header__icon-slot--left">
-						<div class="tw-inline-flex tw-relative tw-tooltip-wrapper">
-							<button
-								class="tw-align-items-center tw-align-middle tw-border-radius-medium tw-button-icon tw-button-icon--secondary tw-core-button tw-core-button--border tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden"
-								onDblClick={() => {this.emit('site.player:reset'); destroy()}} // eslint-disable-line react/jsx-no-bind
-							>
-								<span class="tw-button-icon__icon">
-									<figure class="ffz-i-t-reset" />
-								</span>
-							</button>
-							<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-left">
-								{ this.i18n.t('player.reset_button.all', 'Reset All Players (Double-Click)') }
+		ctx = (<div class={`tw-absolute tw-attached ${is_mod ? 'tw-attached--up tw-attached--left' : 'tw-attached--down tw-attached--right'}`}>
+			<div class={`ffz-balloon ffz-balloon--lg tw-block ffz--menu-context`}>
+				<div class="tw-border-radius-large tw-c-background-base tw-c-text-inherit tw-elevation-4">
+					<div class="tw-c-text-base tw-elevation-1 tw-flex tw-flex-shrink-0 tw-pd-x-1 tw-pd-y-05 tw-popover-header">
+						<div class="tw-flex tw-flex-column tw-justify-content-center tw-mg-l-05 tw-popover-header__icon-slot--left">
+							<div class="tw-inline-flex tw-relative tw-tooltip__container">
+								<button
+									class="tw-align-items-center tw-align-middle tw-border-radius-medium tw-button-icon tw-button-icon--secondary ffz-core-button ffz-core-button--border tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden"
+									onDblClick={() => {this.emit('site.player:reset'); destroy()}} // eslint-disable-line react/jsx-no-bind
+								>
+									<span class="tw-button-icon__icon">
+										<figure class="ffz-i-t-reset" />
+									</span>
+								</button>
+								<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-left">
+									{ this.i18n.t('player.reset_button.all', 'Reset All Players (Double-Click)') }
+								</div>
 							</div>
 						</div>
-					</div>
-					<div class="tw-align-items-center tw-flex tw-flex-column tw-flex-grow-1 tw-justify-content-center">
-						<h5 class="tw-align-center tw-c-text-alt tw-semibold">
-							{ this.i18n.t('site.menu_button.profiles', 'Profiles') }
-						</h5>
-					</div>
-					<div class="tw-flex tw-flex-column tw-justify-content-center tw-mg-l-05 tw-popover-header__icon-slot--right">
-						<div class="tw-inline-flex tw-relative tw-tooltip-wrapper">
-							<button
-								class="tw-align-items-center tw-align-middle tw-border-radius-medium tw-button-icon tw-button-icon--secondary tw-core-button tw-core-button--border tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden"
-								onClick={e => {this.openSettings(e, btn); destroy()}} // eslint-disable-line react/jsx-no-bind
-							>
-								<span class="tw-button-icon__icon">
-									<figure class="ffz-i-cog" />
-								</span>
-							</button>
-							<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-center">
-								{ this.i18n.t('setting.profiles.configure', 'Configure') }
+						<div class="tw-align-items-center tw-flex tw-flex-column tw-flex-grow-1 tw-justify-content-center">
+							<h5 class="tw-align-center tw-c-text-alt tw-semibold">
+								{ this.i18n.t('site.menu_button.profiles', 'Profiles') }
+							</h5>
+						</div>
+						<div class="tw-flex tw-flex-column tw-justify-content-center tw-mg-l-05 tw-popover-header__icon-slot--right">
+							<div class="tw-inline-flex tw-relative tw-tooltip__container">
+								<button
+									class="tw-align-items-center tw-align-middle tw-border-radius-medium tw-button-icon tw-button-icon--secondary ffz-core-button ffz-core-button--border tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden"
+									onClick={e => {this.openSettings(e, btn); destroy()}} // eslint-disable-line react/jsx-no-bind
+								>
+									<span class="tw-button-icon__icon">
+										<figure class="ffz-i-cog" />
+									</span>
+								</button>
+								<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-center">
+									{ this.i18n.t('setting.profiles.configure', 'Configure') }
+								</div>
 							</div>
 						</div>
+						<div class="tw-flex tw-flex-column tw-justify-content-center tw-mg-l-05 tw-popover-header__icon-slot--right">
+							<button
+								class="tw-align-items-center tw-align-middle tw-border-radius-medium tw-button-icon tw-button-icon--secondary ffz-core-button ffz-core-button--border tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden tw-relative"
+								onClick={destroy} // eslint-disable-line react/jsx-no-bind
+							>
+								<span class="tw-button-icon__icon">
+									<figure class="ffz-i-cancel" />
+								</span>
+							</button>
+						</div>
 					</div>
-					<div class="tw-flex tw-flex-column tw-justify-content-center tw-mg-l-05 tw-popover-header__icon-slot--right">
-						<button
-							class="tw-align-items-center tw-align-middle tw-border-radius-medium tw-button-icon tw-button-icon--secondary tw-core-button tw-core-button--border tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden tw-relative"
-							onClick={destroy} // eslint-disable-line react/jsx-no-bind
-						>
-							<span class="tw-button-icon__icon">
-								<figure class="ffz-i-cancel" />
-							</span>
-						</button>
+					<div class="center-window__long-scrollable-area scrollable-area scrollable-area--suppress-scroll-x" data-simplebar>
+						{profiles}
 					</div>
-				</div>
-				<div class="center-window__long-scrollable-area scrollable-area scrollable-area--suppress-scroll-x" data-simplebar>
-					{profiles}
 				</div>
 			</div>
 		</div>);
@@ -555,10 +806,10 @@ export default class MenuButton extends SiteModule {
 			this.log.capture(err);
 			this.log.error('Error enabling main menu.', err);
 
-			this.error = {
-				i18n: 'site.menu_button.error',
-				text: 'There was an error loading the FFZ Control Center. Please refresh and try again.'
-			};
+			this.addError(
+				'site.menu_button.error',
+				'There was an error loading the FFZ Control Center. Please refresh and try again.'
+			);
 
 			this.loading = false;
 			this.once(':clicked', this.loadMenu);

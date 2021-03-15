@@ -8,10 +8,11 @@ export const SERVER = DEBUG ? '//localhost:8000' : 'https://cdn.frankerfacez.com
 
 export const CLIENT_ID = 'a3bc9znoz6vi8ozsoca0inlcr4fcvkl';
 export const API_SERVER = '//api.frankerfacez.com';
-export const NEW_API = '//api-test.frankerfacez.com';
+export const NEW_API = '//api2.frankerfacez.com';
 
 //export const SENTRY_ID = 'https://1c3b56f127254d3ba1bd1d6ad8805eee@sentry.io/1186960';
-export const SENTRY_ID = 'https://07ded545d3224ca59825daee02dc7745@catbag.frankerfacez.com:444/2';
+//export const SENTRY_ID = 'https://07ded545d3224ca59825daee02dc7745@catbag.frankerfacez.com:444/2';
+export const SENTRY_ID = 'https://74b46b3894114f399d51949c6d237489@sentry.frankerfacez.com/2';
 
 
 export const LV_SERVER = 'https://cbenni.com/api';
@@ -19,9 +20,23 @@ export const LV_SOCKET_SERVER = 'wss://cbenni.com/socket.io/';
 
 
 export const KEYS = {
-	Space: 32,
+	Tab: 9,
 	Enter: 13,
+	Shift: 16,
+	Control: 17,
+	Alt: 18,
 	Escape: 27,
+	Space: 32,
+	PageUp: 33,
+	PageDown: 34,
+	End: 35,
+	Home: 36,
+	ArrowLeft: 37,
+	ArrowUp: 38,
+	ArrowRight: 39,
+	ArrowDown: 40,
+	Meta: 91,
+	Context: 93
 };
 
 
@@ -52,7 +67,7 @@ export const KNOWN_CODES = {
 	'Gr(a|e)yFace': 'GrayFace'
 };
 
-export const REPLACEMENT_BASE = '//cdn.frankerfacez.com/script/replacements/';
+export const REPLACEMENT_BASE = `${SERVER}/static/replacements/`;
 
 export const REPLACEMENTS = {
 	15: '15-JKanStyle.png',
@@ -91,7 +106,7 @@ export const WS_CLUSTERS = {
 export const IS_OSX = navigator.platform ? navigator.platform.indexOf('Mac') !== -1 : /OS X/.test(navigator.userAgent);
 export const IS_WIN = navigator.platform ? navigator.platform.indexOf('Win') !== -1 : /Windows/.test(navigator.userAgent);
 export const IS_WEBKIT = navigator.userAgent.indexOf('AppleWebKit/') !== -1 && navigator.userAgent.indexOf('Edge/') === -1;
-export const IS_FIREFOX = navigator.userAgent.indexOf('Firefox/') !== -1;
+export const IS_FIREFOX = (navigator.userAgent.indexOf('Firefox/') !== -1) || (window.InstallTrigger !== undefined);
 
 export const WEBKIT_CSS = IS_WEBKIT ? '-webkit-' : '';
 

@@ -52,7 +52,6 @@ const ALGOLIA_LANGUAGES = {
  *
  *		console.log(getAlgoliaLanguage('en'));
  */
-
 function getAlgoliaLanguage(locale) {
 	if ( ! locale )
 		return ALGOLIA_LANGUAGES.en;
@@ -65,12 +64,12 @@ function getAlgoliaLanguage(locale) {
 	return ALGOLIA_LANGUAGES[locale] || ALGOLIA_LANGUAGES.en;
 }
 
+
 /**
  * TwitchData is a container for getting different types of Twitch data
  * @class TwitchData
  * @extends Module
  */
-
 export default class TwitchData extends Module {
 	constructor(...args) {
 		super(...args);
@@ -78,7 +77,6 @@ export default class TwitchData extends Module {
 		this.site = this.parent;
 
 		this.inject('site.apollo');
-		this.inject('site.web_munch');
 
 		this._waiting_stream_ids = new Map;
 		this._waiting_stream_logins = new Map;
@@ -134,16 +132,20 @@ export default class TwitchData extends Module {
 		return session && session.locale || 'en-US'
 	}
 
-	get searchClient() {
+	async searchClient() {
 		if ( this._search )
 			return this._search;
 
 		const apollo = this.apollo.client,
 			core = this.site.getCore(),
+			web_munch = this.resolve('web_munch');
 
-			search_module = this.web_munch.getModule('algolia-search'),
-			SearchClient = search_module && search_module.a;
+		if ( ! web_munch )
+			return null;
 
+		await web_munch.enable();
+
+		const SearchClient = await this.web_munch.findModule('algolia-search');
 		if ( ! SearchClient || ! apollo || ! core )
 			return null;
 
@@ -160,23 +162,35 @@ export default class TwitchData extends Module {
 	}
 
 	// ========================================================================
+	// Badges
+	// ========================================================================
+
+	async getBadges() {
+		const data = await this.queryApollo(
+			await import(/* webpackChunkName: 'queries' */ './data/global-badges.gql')
+		);
+
+		return get('data.badges', data);
+	}
+
+
+	// ========================================================================
 	// Categories
 	// ========================================================================
 
-/**
- * Queries Apollo for categories matching the search argument
- * @function getMatchingCategories
- * @memberof TwitchData
- * @async
- *
- * @param {string} query - query text to match to a category
- * @returns {Object} a collection of matches for the query string
- *
- * @example
- *
- *  console.log(this.twitch_data.getMatchingCategories("siege"));
- */
-
+	/**
+	 * Queries Apollo for categories matching the search argument
+	 * @function getMatchingCategories
+	 * @memberof TwitchData
+	 * @async
+	 *
+	 * @param {string} query - query text to match to a category
+	 * @returns {Object} a collection of matches for the query string
+	 *
+	 * @example
+	 *
+	 *  console.log(this.twitch_data.getMatchingCategories("siege"));
+	 */
 	async getMatchingCategories(query) {
 		const data = await this.queryApollo(
 			await import(/* webpackChunkName: 'queries' */ './data/search-category.gql'),
@@ -190,21 +204,20 @@ export default class TwitchData extends Module {
 		};
 	}
 
-/**
- * Queries Apollo for category details given the id or name. One of (id, name) MUST be specified
- * @function getCategory
- * @memberof TwitchData
- * @async
- *
- * @param {int|string|null|undefined} id - the category id number (can be an integer string)
- * @param {string|null|undefined} name - the category name
- * @returns {Object} information about the requested stream
- *
- * @example
- *
- *  console.log(this.twitch_data.getCategory(null, 'Just Chatting'));
- */
-
+	/**
+	 * Queries Apollo for category details given the id or name. One of (id, name) MUST be specified
+	 * @function getCategory
+	 * @memberof TwitchData
+	 * @async
+	 *
+	 * @param {int|string|null|undefined} id - the category id number (can be an integer string)
+	 * @param {string|null|undefined} name - the category name
+	 * @returns {Object} information about the requested stream
+	 *
+	 * @example
+	 *
+	 *  console.log(this.twitch_data.getCategory(null, 'Just Chatting'));
+	 */
 	async getCategory(id, name) {
 		const data = await this.queryApollo(
 			await import(/* webpackChunkName: 'queries' */ './data/category-fetch.gql'),
@@ -219,20 +232,19 @@ export default class TwitchData extends Module {
 	// Users
 	// ========================================================================
 
-/**
- * Queries Apollo for users matching the search argument
- * @function getMatchingUsers
- * @memberof TwitchData
- * @async
- *
- * @param {string} query - query text to match to a username
- * @returns {Object} a collection of matches for the query string
- *
- * @example
- *
- *  console.log(this.twitch_data.getMatchingUsers("ninja"));
- */
-
+	/**
+	 * Queries Apollo for users matching the search argument
+	 * @function getMatchingUsers
+	 * @memberof TwitchData
+	 * @async
+	 *
+	 * @param {string} query - query text to match to a username
+	 * @returns {Object} a collection of matches for the query string
+	 *
+	 * @example
+	 *
+	 *  console.log(this.twitch_data.getMatchingUsers("ninja"));
+	 */
 	async getMatchingUsers(query) {
 		const data = await this.queryApollo(
 			await import(/* webpackChunkName: 'queries' */ './data/search-user.gql'),
@@ -246,21 +258,20 @@ export default class TwitchData extends Module {
 		};
 	}
 
-/**
- * Queries Apollo for user details given the id or name. One of (id, login) MUST be specified
- * @function getUser
- * @memberof TwitchData
- * @async
- *
- * @param {int|string|null|undefined} id - the user id number (can be an integer string)
- * @param {string|null|undefined} login - the username
- * @returns {Object} information about the requested user
- *
- * @example
- *
- *  console.log(this.twitch_data.getUser(19571641, null));
- */
-
+	/**
+	 * Queries Apollo for user details given the id or name. One of (id, login) MUST be specified
+	 * @function getUser
+	 * @memberof TwitchData
+	 * @async
+	 *
+	 * @param {int|string|null|undefined} id - the user id number (can be an integer string)
+	 * @param {string|null|undefined} login - the username
+	 * @returns {Object} information about the requested user
+	 *
+	 * @example
+	 *
+	 *  console.log(this.twitch_data.getUser(19571641, null));
+	 */
 	async getUser(id, login) {
 		const data = await this.queryApollo(
 			await import(/* webpackChunkName: 'queries' */ './data/user-fetch.gql'),
@@ -270,21 +281,43 @@ export default class TwitchData extends Module {
 		return get('data.user', data);
 	}
 
-/**
- * Queries Apollo for the logged in user's relationship to the channel with given the id or name. One of (id, login) MUST be specified
- * @function getUserSelf
- * @memberof TwitchData
- * @async
- *
- * @param {int|string|null|undefined} id - the channel id number (can be an integer string)
- * @param {string|null|undefined} login - the channel username
- * @returns {Object} information about your status in the channel
- *
- * @example
- *
- *  console.log(this.twitch_data.getUserSelf(null, "ninja"));
- */
+	/**
+	 * Queries Apollo for the user's current game, details given the user id or name. One of (id, login) MUST be specified
+	 * @function getUserGame
+	 * @memberof TwitchData
+	 * @async
+	 *
+	 * @param {int|string|null|undefined} id - the user id number (can be an integer string)
+	 * @param {string|null|undefined} login - the username
+	 * @returns {Object} information about the requested user
+	 *
+	 * @example
+	 *
+	 *  console.log(this.twitch_data.getUserGame(19571641, null));
+	 */
+	async getUserGame(id, login) {
+		const data = await this.queryApollo(
+			await import(/* webpackChunkName: 'queries' */ './data/user-game.gql'),
+			{ id, login }
+		);
 
+		return get('data.user.broadcastSettings.game', data);
+	}
+
+	/**
+	 * Queries Apollo for the logged in user's relationship to the channel with given the id or name. One of (id, login) MUST be specified
+	 * @function getUserSelf
+	 * @memberof TwitchData
+	 * @async
+	 *
+	 * @param {int|string|null|undefined} id - the channel id number (can be an integer string)
+	 * @param {string|null|undefined} login - the channel username
+	 * @returns {Object} information about your status in the channel
+	 *
+	 * @example
+	 *
+	 *  console.log(this.twitch_data.getUserSelf(null, "ninja"));
+	 */
 	async getUserSelf(id, login) {
 		const data = await this.queryApollo(
 			await import(/* webpackChunkName: 'queries' */ './data/user-self.gql'),
@@ -294,21 +327,20 @@ export default class TwitchData extends Module {
 		return get('data.user.self', data);
 	}
 
-/**
- * Queries Apollo for the requested user's latest broadcast. One of (id, login) MUST be specified
- * @function getLastBroadcast
- * @memberof TwitchData
- * @async
- *
- * @param {int|string|null|undefined} id - the channel id number (can be an integer string)
- * @param {string|null|undefined} login - the channel username
- * @returns {Object} information about the requested user's latest broadcast
- *
- * @example
- *
- *  console.log(this.twitch_data.getLastBroadcast(19571641, null));
- */
-
+	/**
+	 * Queries Apollo for the requested user's latest broadcast. One of (id, login) MUST be specified
+	 * @function getLastBroadcast
+	 * @memberof TwitchData
+	 * @async
+	 *
+	 * @param {int|string|null|undefined} id - the channel id number (can be an integer string)
+	 * @param {string|null|undefined} login - the channel username
+	 * @returns {Object} information about the requested user's latest broadcast
+	 *
+	 * @example
+	 *
+	 *  console.log(this.twitch_data.getLastBroadcast(19571641, null));
+	 */
 	async getLastBroadcast(id, login) {
 		const data = await this.queryApollo(
 			await import(/* webpackChunkName: 'queries' */ './data/last-broadcast.gql'),
@@ -322,21 +354,20 @@ export default class TwitchData extends Module {
 	// Broadcast ID
 	// ========================================================================
 
-/**
- * Queries Apollo for the ID of the specified user's current broadcast. This ID will become the VOD ID. One of (id, login) MUST be specified
- * @function getBroadcastID
- * @memberof TwitchData
- * @async
- *
- * @param {int|string|null|undefined} id - the channel id number (can be an integer string)
- * @param {string|null|undefined} login - the channel username
- * @returns {Object} information about the current broadcast
- *
- * @example
- *
- *  console.log(this.twitch_data.getBroadcastID(null, "ninja"));
- */
-
+	/**
+	 * Queries Apollo for the ID of the specified user's current broadcast. This ID will become the VOD ID. One of (id, login) MUST be specified
+	 * @function getBroadcastID
+	 * @memberof TwitchData
+	 * @async
+	 *
+	 * @param {int|string|null|undefined} id - the channel id number (can be an integer string)
+	 * @param {string|null|undefined} login - the channel username
+	 * @returns {Object} information about the current broadcast
+	 *
+	 * @example
+	 *
+	 *  console.log(this.twitch_data.getBroadcastID(null, "ninja"));
+	 */
 	async getBroadcastID(id, login) {
 		const data = await this.queryApollo({
 			query: await import(/* webpackChunkName: 'queries' */ './data/broadcast-id.gql'),
@@ -350,24 +381,36 @@ export default class TwitchData extends Module {
 	}
 
 
+	async getChannelColor(id, login) {
+		const data = await this.queryApollo({
+			query: await import(/* webpackChunkName: 'queries' */ './data/user-color.gql'),
+			variables: {
+				id,
+				login
+			}
+		});
+
+		return get('data.user.primaryColorHex', data);
+	}
+
+
 	// ========================================================================
 	// Polls
 	// ========================================================================
 
-/**
- * Queries Apollo for information about the specified poll.
- * @function getPoll
- * @memberof TwitchData
- * @async
- *
- * @param {int|string} poll_id - the poll id number (can be an integer string)
- * @returns {Object} information about the specified poll
- *
- * @example
- *
- *  console.log(this.twitch_data.getPoll(1337));
- */
-
+	/**
+	 * Queries Apollo for information about the specified poll.
+	 * @function getPoll
+	 * @memberof TwitchData
+	 * @async
+	 *
+	 * @param {int|string} poll_id - the poll id number (can be an integer string)
+	 * @returns {Object} information about the specified poll
+	 *
+	 * @example
+	 *
+	 *  console.log(this.twitch_data.getPoll(1337));
+	 */
 	async getPoll(poll_id) {
 		const data = await this.queryApollo({
 			query: await import(/* webpackChunkName: 'queries' */ './data/poll-get.gql'),
@@ -379,27 +422,26 @@ export default class TwitchData extends Module {
 		return get('data.poll', data);
 	}
 
-/**
- * Create a new poll
- * @function createPoll
- * @memberof TwitchData
- * @async
- *
- * @param {int|string} channel_id - the channel id number (can be an integer string)
- * @param {string} title - the poll title
- * @param {string[]} choices - an array of poll choices
- * @param {Object} [options] - an object containing poll options
- * @param {int} [options.bits=0] - how many bits it costs to vote
- * @param {int} [options.duration=60] - how long the poll will be held for, in seconds
- * @param {bool} [options.subscriberMultiplier=false] - whether to activate subsriber 2x multiplier
- * @param {bool} [options.subscriberOnly=false] - whether only subscribers may vote
- * @returns {Object} poll data
- *
- * @example
- *
- *  console.log(this.twitch_data.createPoll(19571641, "Pick an option:", ["One", "Two", "Three"], {bits: 10, duration: 120, subscriberMultiplier: false, subscriberOnly: true}));
- */
-
+	/**
+	 * Create a new poll
+	 * @function createPoll
+	 * @memberof TwitchData
+	 * @async
+	 *
+	 * @param {int|string} channel_id - the channel id number (can be an integer string)
+	 * @param {string} title - the poll title
+	 * @param {string[]} choices - an array of poll choices
+	 * @param {Object} [options] - an object containing poll options
+	 * @param {int} [options.bits=0] - how many bits it costs to vote
+	 * @param {int} [options.duration=60] - how long the poll will be held for, in seconds
+	 * @param {bool} [options.subscriberMultiplier=false] - whether to activate subsriber 2x multiplier
+	 * @param {bool} [options.subscriberOnly=false] - whether only subscribers may vote
+	 * @returns {Object} poll data
+	 *
+	 * @example
+	 *
+	 *  console.log(this.twitch_data.createPoll(19571641, "Pick an option:", ["One", "Two", "Three"], {bits: 10, duration: 120, subscriberMultiplier: false, subscriberOnly: true}));
+	 */
 	async createPoll(channel_id, title, choices, options = {}) {
 		if ( typeof title !== 'string' )
 			throw new TypeError('title must be string');
@@ -433,20 +475,19 @@ export default class TwitchData extends Module {
 		return get('data.createPoll.poll', data);
 	}
 
-/**
- * Place specified poll into archive
- * @function archivePoll
- * @memberof TwitchData
- * @async
- *
- * @param {int|string|null|undefined} poll_id - the poll id number (can be an integer string)
- * @returns {Object} information about the specified poll
- *
- * @example
- *
- *  console.log(this.twitch_data.archivePoll(1337));
- */
-
+	/**
+	 * Place specified poll into archive
+	 * @function archivePoll
+	 * @memberof TwitchData
+	 * @async
+	 *
+	 * @param {int|string|null|undefined} poll_id - the poll id number (can be an integer string)
+	 * @returns {Object} information about the specified poll
+	 *
+	 * @example
+	 *
+	 *  console.log(this.twitch_data.archivePoll(1337));
+	 */
 	async archivePoll(poll_id) {
 		const data = await this.mutate({
 			mutation: await import(/* webpackChunkName: 'queries' */ './data/poll-archive.gql'),
@@ -458,20 +499,19 @@ export default class TwitchData extends Module {
 		return get('data.archivePoll.poll', data);
 	}
 
-/**
- * Terminate specified poll
- * @function terminatePoll
- * @memberof TwitchData
- * @async
- *
- * @param {int|string|null|undefined} poll_id - the poll id number (can be an integer string)
- * @returns {Object} information about the specified poll
- *
- * @example
- *
- *  console.log(this.twitch_data.archivePoll(1337));
- */
-
+	/**
+	 * Terminate specified poll
+	 * @function terminatePoll
+	 * @memberof TwitchData
+	 * @async
+	 *
+	 * @param {int|string|null|undefined} poll_id - the poll id number (can be an integer string)
+	 * @returns {Object} information about the specified poll
+	 *
+	 * @example
+	 *
+	 *  console.log(this.twitch_data.archivePoll(1337));
+	 */
 	async terminatePoll(poll_id) {
 		const data = await this.mutate({
 			mutation: await import(/* webpackChunkName: 'queries' */ './data/poll-terminate.gql'),
@@ -501,7 +541,6 @@ export default class TwitchData extends Module {
 	 *
 	 *  this.twitch_data.getStreamMeta(19571641, null).then(function(returnObj){console.log(returnObj);});
 	 */
-
 	getStreamMeta(id, login) {
 		return new Promise((s, f) => {
 			if ( id ) {
@@ -720,20 +759,19 @@ export default class TwitchData extends Module {
 			this._loadTags();
 	}
 
-/**
- * Queries Apollo for tag information
- * @function getTag
- * @memberof TwitchData
- *
- * @param {int|string} id - the tag id
- * @param {bool} [want_description=false] - whether the description is also required
- * @returns {Promise} tag information
- *
- * @example
- *
- *  this.twitch_data.getTag(50).then(function(returnObj){console.log(returnObj);});
- */
-
+	/**
+	 * Queries Apollo for tag information
+	 * @function getTag
+	 * @memberof TwitchData
+	 *
+	 * @param {int|string} id - the tag id
+	 * @param {bool} [want_description=false] - whether the description is also required
+	 * @returns {Promise} tag information
+	 *
+	 * @example
+	 *
+	 *  this.twitch_data.getTag(50).then(function(returnObj){console.log(returnObj);});
+	 */
 	getTag(id, want_description = false) {
 		// Make sure we weren't accidentally handed a tag object.
 		if ( id && id.id )
@@ -756,21 +794,20 @@ export default class TwitchData extends Module {
 		});
 	}
 
-/**
- * Queries the tag cache for tag information, queries Apollo on cache miss
- * @function getTagImmediate
- * @memberof TwitchData
- *
- * @param {int|string} id - the tag id
- * @param {getTagImmediateCallback} callback - callback function for use when requested tag information is not cached
- * @param {bool} [want_description=false] - whether the tag description is required
- * @returns {Object|null} tag information object, or on null, expect callback
- *
- * @example
- *
- *  console.log(this.twitch_data.getTagImmediate(50));
- */
-
+	/**
+	 * Queries the tag cache for tag information, queries Apollo on cache miss
+	 * @function getTagImmediate
+	 * @memberof TwitchData
+	 *
+	 * @param {int|string} id - the tag id
+	 * @param {getTagImmediateCallback} callback - callback function for use when requested tag information is not cached
+	 * @param {bool} [want_description=false] - whether the tag description is required
+	 * @returns {Object|null} tag information object, or on null, expect callback
+	 *
+	 * @example
+	 *
+	 *  console.log(this.twitch_data.getTagImmediate(50));
+	 */
 	getTagImmediate(id, callback, want_description = false) {
 		// Make sure we weren't accidentally handed a tag object.
 		if ( id && id.id )
@@ -789,28 +826,27 @@ export default class TwitchData extends Module {
 		return out;
 	}
 
-/**
- * Callback function used when getTagImmediate experiences a cache miss
- * @callback getTagImmediateCallback
- * @param {int} tag_id - The tag ID number
- * @param {Object} tag_object - the object containing tag data
- * @param {Object} [error_object] - returned error information on tag data fetch failure
- */
+	/**
+	 * Callback function used when getTagImmediate experiences a cache miss
+	 * @callback getTagImmediateCallback
+	 * @param {int} tag_id - The tag ID number
+	 * @param {Object} tag_object - the object containing tag data
+	 * @param {Object} [error_object] - returned error information on tag data fetch failure
+	 */
 
-/**
- * Get top [n] tags
- * @function getTopTags
- * @memberof TwitchData
- * @async
- *
- * @param {int|string} limit=50 - the number of tags to return (can be an integer string)
- * @returns {string[]} an array containing the top tags up to the limit requested
- *
- * @example
- *
- *  console.log(this.twitch_data.getTopTags(20));
- */
-
+	/**
+	 * Get top [n] tags
+	 * @function getTopTags
+	 * @memberof TwitchData
+	 * @async
+	 *
+	 * @param {int|string} limit=50 - the number of tags to return (can be an integer string)
+	 * @returns {string[]} an array containing the top tags up to the limit requested
+	 *
+	 * @example
+	 *
+	 *  console.log(this.twitch_data.getTopTags(20));
+	 */
 	async getTopTags(limit = 50) {
 		const data = await this.queryApollo(
 			await import(/* webpackChunkName: 'queries' */ './data/tags-top.gql'),
@@ -833,19 +869,18 @@ export default class TwitchData extends Module {
 		return out;
 	}
 
-/**
- * Queries tag languages
- * @function getLanguagesFromTags
- * @memberof TwitchData
- *
- * @param {int[]} tags - an array of tag IDs
- * @returns {string[]} tag information
- *
- * @example
- *
- *  console.log(this.twitch_data.getLanguagesFromTags([50, 53, 58, 84]));
- */
-
+	/**
+	 * Queries tag languages
+	 * @function getLanguagesFromTags
+	 * @memberof TwitchData
+	 *
+	 * @param {int[]} tags - an array of tag IDs
+	 * @returns {string[]} tag information
+	 *
+	 * @example
+	 *
+	 *  console.log(this.twitch_data.getLanguagesFromTags([50, 53, 58, 84]));
+	 */
 	getLanguagesFromTags(tags, callback) { // TODO: actually use the callback
 		const out = [],
 			fn = callback ? debounce(() => {
@@ -865,32 +900,33 @@ export default class TwitchData extends Module {
 		return out;
 	}
 
-/**
- * Search tags
- * @function getMatchingTags
- * @memberof TwitchData
- * @async
- *
- * @param {string} query - the search string
- * @param {string} [locale] - the locale to return tags from
- * @param {string} [category=null] - the category to return tags from
- * @returns {string[]} an array containing tags that match the query string
- *
- * @example
- *
- *  console.log(this.twitch_data.getMatchingTags("Rainbo"));
- */
-
+	/**
+	 * Search tags
+	 * @function getMatchingTags
+	 * @memberof TwitchData
+	 * @async
+	 *
+	 * @param {string} query - the search string
+	 * @param {string} [locale] - the locale to return tags from
+	 * @param {string} [category=null] - the category to return tags from
+	 * @returns {string[]} an array containing tags that match the query string
+	 *
+	 * @example
+	 *
+	 *  console.log(this.twitch_data.getMatchingTags("Rainbo"));
+	 */
 	async getMatchingTags(query, locale, category = null) {
 		if ( ! locale )
 			locale = this.locale;
+
+		const client = await this.searchClient();
 
 		locale = getAlgoliaLanguage(locale);
 
 		let nodes;
 
 		if ( category ) {
-			const data = await this.searchClient.queryForType(
+			const data = await client.queryForType(
 				'stream_tag', query, generateUUID(), {
 					hitsPerPage: 100,
 					faceFilters: [
@@ -906,7 +942,7 @@ export default class TwitchData extends Module {
 			nodes = get('streamTags.hits', data);
 
 		} else {
-			const data = await this.searchClient.queryForType(
+			const data = await client.queryForType(
 				'tag', query, generateUUID(), {
 					hitsPerPage: 100,
 					facetFilters: [

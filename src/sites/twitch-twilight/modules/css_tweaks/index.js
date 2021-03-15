@@ -11,15 +11,18 @@ import {has} from 'utilities/object';
 const STYLE_VALIDATOR = document.createElement('span');
 
 const CLASSES = {
+	//'unfollow': '.follow-btn__follow-btn--following,.follow-btn--following',
 	'top-discover': '.navigation-link[data-a-target="discover-link"]',
-	'side-nav': '.side-nav',
-	'side-rec-channels': '.side-nav .recommended-channels',
-	'side-rec-friends': '.side-nav .recommended-friends',
+	'side-nav': '.side-nav,#sideNav',
+	'side-nav-viewers': '.side-nav-card__live-status',
+	'side-rec-channels': '.side-nav .recommended-channels,.side-nav .side-nav-section + .side-nav-section:not(.online-friends)',
+	//'side-rec-friends': '.side-nav .recommended-friends',
 	'side-friends': '.side-nav .online-friends',
 	'side-closed-friends': '.side-nav--collapsed .online-friends',
-	'side-closed-rec-channels': '.side-nav--collapsed .recommended-channels',
-	//'side-offline-channels': '.side-nav-card__link[href*="/videos/"],.side-nav-card[href*="/videos/"]',
+	'side-closed-rec-channels': '.side-nav--collapsed .recommended-channels,.side-nav--collapsed .side-nav-section + .side-nav-section:not(.online-friends)',
+	'side-offline-channels': '.ffz--side-nav-card-offline',
 	'side-rerun-channels': '.side-nav .ffz--side-nav-card-rerun',
+	'modview-hide-info': '.tw-flex.modview-player-widget__hide-stream-info',
 
 	'community-highlights': '.community-highlight-stack__card',
 
@@ -32,13 +35,14 @@ const CLASSES = {
 	'player-rerun-bar': '.channel-root__player-container div.tw-c-text-overlay:not([data-a-target="hosting-ui-header"])',
 
 	'pinned-cheer': '.pinned-cheer,.pinned-cheer-v2,.channel-leaderboard',
-	'whispers': 'body .whispers-open-threads,.tw-core-button[data-a-target="whisper-box-button"]',
+	'whispers': 'body .whispers-open-threads,.tw-core-button[data-a-target="whisper-box-button"],.whispers__pill',
 
-	'dir-live-ind': '.preview-card[data-ffz-type="live"] .tw-channel-status-text-indicator,.live-channel-card:not([data-a-target*="host"]) .stream-type-indicator.stream-type-indicator--live,.stream-thumbnail__card .stream-type-indicator.stream-type-indicator--live,.preview-card .stream-type-indicator.stream-type-indicator--live,.preview-card .preview-card-stat.preview-card-stat--live',
+	'dir-live-ind': '.live-channel-card[data-ffz-type="live"] .tw-channel-status-text-indicator, article[data-ffz-type="live"] .tw-channel-status-text-indicator',
 	'profile-hover': '.preview-card .tw-relative:hover .ffz-channel-avatar',
 	'not-live-bar': 'div[data-test-selector="non-live-video-banner-layout"]',
-	'channel-live-ind': '.channel-header__user .tw-channel-status-text-indicator',
-	'celebration': 'body .celebration__overlay'
+	'channel-live-ind': '.channel-header__user .tw-channel-status-text-indicator,.channel-info-content .tw-halo__indicator',
+	'celebration': 'body .celebration__overlay',
+	'mod-view': '.chat-input__buttons-container .tw-core-button[href*="/moderator"]'
 };
 
 
@@ -49,8 +53,6 @@ export default class CSSTweaks extends Module {
 		this.should_enable = true;
 
 		this.inject('settings');
-		this.inject('site.chat');
-		this.inject('site.theme');
 
 		this.style = new ManagedStyle;
 		this.chunks = {};
@@ -59,27 +61,107 @@ export default class CSSTweaks extends Module {
 
 		// Layout
 
+		this.settings.add('metadata.modview.hide-info', {
+			default: false,
+			ui: {
+				path: 'Channel > Metadata >> Mod View',
+				title: 'Hide "Hide Stream Info Stripe" button.',
+				component: 'setting-check-box'
+			},
+			changed: val => this.toggleHide('modview-hide-info', val)
+		});
+
+		this.settings.add('metadata.viewers.no-native', {
+			requires: ['metadata.viewers'],
+			default: null,
+			process(ctx, val) {
+				return val == null ? ctx.get('metadata.viewers') : val
+			},
+			changed: val => this.toggle('hide-native-viewers', val),
+			ui: {
+				path: 'Channel > Metadata >> Player',
+				title: "Hide Twitch's native Viewer Count.",
+				description: "By default, this is enabled whenever FFZ's own Viewer Count display is enabled to avoid redundant information.",
+				component: 'setting-check-box'
+			}
+		});
+
+		this.settings.add('metadata.uptime.no-native', {
+			requires: ['metadata.uptime'],
+			default: null,
+			process(ctx, val) {
+				return val == null ? ctx.get('metadata.uptime') !== 0 : val
+			},
+			changed: val => this.toggle('hide-native-uptime', val),
+			ui: {
+				path: 'Channel > Metadata >> Player',
+				title: "Hide Twitch's native Stream Uptime.",
+				description: "By default, this is enabled whenever FFZ's own Stream Uptime display is enabled to avoid redundant information.",
+				component: 'setting-check-box'
+			}
+		});
+
 		this.settings.add('layout.use-chat-fix', {
-			requires: ['layout.swap-sidebars', 'layout.use-portrait', 'chat.use-width'],
+			requires: ['context.force_chat_fix', 'layout.swap-sidebars', 'layout.use-portrait', 'chat.use-width', 'context.isWatchParty'],
 			process(ctx) {
-				return ctx.get('layout.swap-sidebars') || ctx.get('layout.use-portrait') || ctx.get('chat.use-width')
+				if ( ctx.get('context.isWatchParty') )
+					return false;
+
+				return ctx.get('context.force_chat_fix') || ctx.get('layout.swap-sidebars') || ctx.get('layout.use-portrait') || ctx.get('chat.use-width')
 			},
 			changed: val => {
+				if ( val )
+					this.toggle('chat-no-animate', true);
+				else if ( ! val && ! this._no_anim_timer )
+					this._no_anim_timer = requestAnimationFrame(() => {
+						this._no_anim_timer = null;
+						if ( ! this.settings.get('layout.use-chat-fix') )
+							this.toggle('chat-no-animate', false);
+					});
+
 				this.toggle('chat-fix', val);
 				this.emit('site.player:fix-player');
+				this.emit('site.layout:resize');
 			}
 		});
 
 		this.settings.add('layout.side-nav.show', {
-			default: true,
+			default: 1,
+			requires: ['layout.use-portrait'],
+			process(ctx, val) {
+				if ( val === 2 )
+					return ! ctx.get('layout.use-portrait');
+
+				return val;
+			},
+
 			ui: {
 				sort: -1,
 				path: 'Appearance > Layout >> Side Navigation',
 				title: 'Display Side Navigation',
 
+				component: 'setting-select-box',
+				data: [
+					{value: 0, title: 'Never'},
+					{value: 1, title: 'Always'},
+					{value: 2, title: 'Hide in Portrait'}
+				]
+			},
+
+			changed: val => {
+				this.toggle('hide-side-nav', !val);
+				this.emit('site.layout:resize');
+			}
+		});
+
+		this.settings.add('layout.side-nav.hide-viewers', {
+			default: false,
+			ui: {
+				path: 'Appearance > Layout >> Side Navigation',
+				title: 'Hide Channel View Counts',
 				component: 'setting-check-box'
 			},
-			changed: val => this.toggle('hide-side-nav', !val)
+			changed: val => this.toggleHide('side-nav-viewers', val)
 		});
 
 		this.settings.add('layout.side-nav.show-avatars', {
@@ -128,7 +210,7 @@ export default class CSSTweaks extends Module {
 			}
 		});
 
-		this.settings.add('layout.side-nav.show-rec-friends', {
+		/*this.settings.add('layout.side-nav.show-rec-friends', {
 			default: true,
 			ui: {
 				path: 'Appearance > Layout >> Side Navigation',
@@ -136,9 +218,9 @@ export default class CSSTweaks extends Module {
 				component: 'setting-check-box'
 			},
 			changed: val => this.toggleHide('side-rec-friends', !val)
-		});
+		});*/
 
-		/*this.settings.add('layout.side-nav.hide-offline', {
+		this.settings.add('layout.side-nav.hide-offline', {
 			default: false,
 			ui: {
 				path: 'Appearance > Layout >> Side Navigation',
@@ -146,7 +228,7 @@ export default class CSSTweaks extends Module {
 				component: 'setting-check-box'
 			},
 			changed: val => this.toggleHide('side-offline-channels', val)
-		});*/
+		});
 
 		this.settings.add('layout.side-nav.rerun-style', {
 			default: 1,
@@ -168,6 +250,10 @@ export default class CSSTweaks extends Module {
 
 		this.settings.add('layout.swap-sidebars', {
 			default: false,
+			requires: ['context.isWatchParty'],
+			process(ctx, val) {
+				return ctx.get('context.isWatchParty') ? false : val;
+			},
 			ui: {
 				path: 'Appearance > Layout >> Side Navigation',
 				title: 'Swap Sidebars',
@@ -175,13 +261,19 @@ export default class CSSTweaks extends Module {
 
 				component: 'setting-check-box'
 			},
-			changed: val => this.toggle('swap-sidebars', val)
+			changed: val => {
+				this.toggle('swap-sidebars', val);
+				this.emit('site.layout:resize');
+			}
 		});
 
 		this.settings.add('layout.minimal-navigation', {
-			requires: ['layout.theatre-navigation'],
+			requires: ['layout.theatre-navigation', 'context.isWatchParty'],
 			default: false,
 			process(ctx, val) {
+				if ( ctx.get('context.isWatchParty') )
+					return false;
+
 				return ctx.get('layout.theatre-navigation') ?
 					true : val;
 			},
@@ -192,7 +284,10 @@ export default class CSSTweaks extends Module {
 
 				component: 'setting-check-box'
 			},
-			changed: val => this.toggle('minimal-navigation', val)
+			changed: val => {
+				this.toggle('minimal-navigation', val);
+				this.emit('site.layout:resize');
+			}
 		});
 
 		this.settings.add('layout.theatre-navigation', {
@@ -206,7 +301,10 @@ export default class CSSTweaks extends Module {
 				title: 'Show the minimized navigation bar when in theatre mode.',
 				component: 'setting-check-box'
 			},
-			changed: val => this.toggle('theatre-nav', val)
+			changed: val => {
+				this.toggle('theatre-nav', val);
+				this.emit('site.layout:resize');
+			}
 		});
 
 		this.settings.add('layout.discover', {
@@ -226,7 +324,7 @@ export default class CSSTweaks extends Module {
 			default: true,
 			ui: {
 				path: 'Appearance > Layout >> Top Navigation',
-				title: 'Show Twitch Prime offers.',
+				title: 'Show Prime Gaming Loot.',
 				component: 'setting-check-box'
 			},
 			changed: val => this.toggleHide('prime-offers', !val)
@@ -242,7 +340,10 @@ export default class CSSTweaks extends Module {
 				title: 'Display Whispers',
 				component: 'setting-check-box'
 			},
-			changed: val => this.toggleHide('whispers', !val)
+			changed: val => {
+				this.toggleHide('whispers', !val);
+				this.emit('site.layout:resize');
+			}
 		});
 
 		this.settings.add('chat.bits.show', {
@@ -281,10 +382,20 @@ export default class CSSTweaks extends Module {
 			changed: () => this.updateFont()
 		});
 
+		this.settings.add('channel.hide-unfollow', {
+			default: false,
+			ui: {
+				path: 'Channel > Appearance >> General',
+				title: 'Hide the Unfollow button.',
+				component: 'setting-check-box'
+			},
+			changed: val => this.toggle('hide-unfollow-button', val)
+		});
+
 		this.settings.add('channel.hide-live-indicator', {
 			requires: ['context.route.name'],
 			process(ctx, val) {
-				return ctx.get('context.route.name') === 'user' ? val : false
+				return (ctx.get('context.route.name') === 'user' || ctx.get('context.route.name') === 'user-home') ? val : false
 			},
 			default: false,
 			ui: {
@@ -305,7 +416,7 @@ export default class CSSTweaks extends Module {
 			changed: val => this.toggle('square-avatars', !val)
 		});
 
-		this.settings.add('channel.hide-not-live-bar', {
+		/*this.settings.add('channel.hide-not-live-bar', {
 			default: false,
 			ui: {
 				path: 'Channel > Appearance >> General',
@@ -314,10 +425,14 @@ export default class CSSTweaks extends Module {
 				component: 'setting-check-box'
 			},
 			changed: val => this.toggleHide('not-live-bar', val)
-		});
+		});*/
 	}
 
 	onEnable() {
+		this.toggleHide('modview-hide-info', this.settings.get('metadata.modview.hide-info'));
+		this.toggleHide('side-nav-viewers', this.settings.get('layout.side-nav.hide-viewers'));
+		this.toggle('hide-native-uptime', this.settings.get('metadata.uptime.no-native'));
+		this.toggle('hide-native-viewers', this.settings.get('metadata.viewers.no-native'));
 		this.toggle('chat-fix', this.settings.get('layout.use-chat-fix'));
 		this.toggle('swap-sidebars', this.settings.get('layout.swap-sidebars'));
 		this.toggle('minimal-navigation', this.settings.get('layout.minimal-navigation'));
@@ -325,13 +440,14 @@ export default class CSSTweaks extends Module {
 
 		this.toggle('hide-side-nav-avatars', ! this.settings.get('layout.side-nav.show-avatars'));
 		this.toggle('hide-side-nav', !this.settings.get('layout.side-nav.show'));
-		this.toggleHide('side-rec-friends', !this.settings.get('layout.side-nav.show-rec-friends'));
-		//this.toggleHide('side-offline-channels', this.settings.get('layout.side-nav.hide-offline'));
+		//this.toggleHide('side-rec-friends', !this.settings.get('layout.side-nav.show-rec-friends'));
+		this.toggleHide('side-offline-channels', this.settings.get('layout.side-nav.hide-offline'));
 		this.toggleHide('prime-offers', !this.settings.get('layout.prime-offers'));
 		this.toggleHide('top-discover', !this.settings.get('layout.discover'));
+		this.toggle('hide-unfollow-button', this.settings.get('channel.hide-unfollow'));
 
 		this.toggle('square-avatars', ! this.settings.get('channel.round-avatars'));
-		this.toggleHide('not-live-bar', this.settings.get('channel.hide-not-live-bar'));
+		//this.toggleHide('not-live-bar', this.settings.get('channel.hide-not-live-bar'));
 		this.toggleHide('channel-live-ind', this.settings.get('channel.hide-live-indicator'));
 
 		const reruns = this.settings.get('layout.side-nav.rerun-style');
@@ -353,6 +469,7 @@ export default class CSSTweaks extends Module {
 		this.updateTopNav();
 
 		this.emit('site.player:fix-player');
+		this.emit('site.layout:resize');
 	}
 
 	updateTopNav() {
@@ -429,6 +546,8 @@ export default class CSSTweaks extends Module {
 				const k = key.slice(2, key.length - (key.endsWith('.scss') ? 5 : 4));
 				this.chunks[k] = raw(key).default;
 			}
+
+			this.emit('site.layout:resize');
 
 			this.chunks_loaded = true;
 			r();

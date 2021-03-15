@@ -12,8 +12,10 @@
 			<input
 				:id="item.full_key"
 				ref="control"
+				:type="type"
+				:placeholder="placeholder"
 				:value="value"
-				class="tw-border-radius-medium tw-font-size-6 tw-pd-x-1 tw-pd-y-05 tw-mg-05 tw-input"
+				class="tw-border-radius-medium tw-font-size-6 tw-pd-x-1 tw-pd-y-05 tw-mg-05 ffz-input"
 				@change="onChange"
 			>
 
@@ -35,7 +37,7 @@
 				</span>
 			</button>
 
-			<button v-if="has_value" class="tw-mg-l-05 tw-button tw-button--text tw-tooltip-wrapper" @click="clear">
+			<button v-if="has_value" class="tw-mg-l-05 tw-button tw-button--text tw-tooltip__container" @click="clear">
 				<span class="tw-button__text ffz-i-cancel" />
 				<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-right">
 					{{ t('setting.reset', 'Reset to Default') }}
@@ -61,6 +63,16 @@ import SettingMixin from '../setting-mixin';
 export default {
 	mixins: [SettingMixin],
 	props: ['item', 'context'],
+
+	computed: {
+		type() {
+			return this.item.type || 'text';
+		},
+
+		placeholder() {
+			return this.item.placeholder || this.default_value;
+		}
+	},
 
 	methods: {
 		onChange() {

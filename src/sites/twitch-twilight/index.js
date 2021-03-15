@@ -7,10 +7,12 @@
 import BaseSite from '../base';
 
 import WebMunch from 'utilities/compat/webmunch';
+import Elemental from 'utilities/compat/elemental';
 import Fine from 'utilities/compat/fine';
 import FineRouter from 'utilities/compat/fine-router';
 import Apollo from 'utilities/compat/apollo';
 import TwitchData from 'utilities/twitch-data';
+import Subpump from 'utilities/compat/subpump';
 
 import Switchboard from './switchboard';
 
@@ -30,26 +32,41 @@ export default class Twilight extends BaseSite {
 
 		this.inject(WebMunch);
 		this.inject(Fine);
+		this.inject(Elemental);
 		this.inject('router', FineRouter);
 		this.inject(Apollo, false);
 		this.inject(TwitchData);
 		this.inject(Switchboard);
+		this.inject(Subpump);
 
 		this._dom_updates = [];
 	}
 
-	onLoad() {
-		this.populateModules();
+	async populateModules() {
+		const ctx = await require.context('site/modules', true, /(?:^(?:\.\/)?[^/]+|index)\.jsx?$/);
+		const modules = await this.populate(ctx, this.log);
+		this.log.info(`Loaded descriptions of ${Object.keys(modules).length} modules.`);
+	}
+
+	async onLoad() {
+		await this.populateModules();
 
 		this.web_munch.known(Twilight.KNOWN_MODULES);
 
 		this.router.route(Twilight.ROUTES);
 		this.router.routeName(Twilight.ROUTE_NAMES);
 
+		this.router.route('user', '/:userName', null, state => state?.channelView !== 'Home');
+		this.router.route('user-home', '/:userName', null, state => state?.channelView === 'Home');
+
 		this.router.route(Twilight.DASH_ROUTES, 'dashboard.twitch.tv');
+		this.router.route(Twilight.PLAYER_ROUTES, 'player.twitch.tv');
+		this.router.route(Twilight.CLIP_ROUTES, 'clips.twitch.tv');
 	}
 
 	onEnable() {
+		this.settings = this.resolve('settings');
+
 		const thing = this.fine.searchNode(null, n => n?.pendingProps?.store?.getState),
 			store = this.store = thing?.pendingProps?.store;
 
@@ -91,6 +108,7 @@ export default class Twilight extends BaseSite {
 		this.router.on(':route', (route, match) => {
 			this.log.info('Navigation', route && route.name, match && match[0]);
 			this.fine.route(route && route.name);
+			this.elemental.route(route && route.name);
 			this.settings.updateContext({
 				route,
 				route_data: match
@@ -99,6 +117,7 @@ export default class Twilight extends BaseSite {
 
 		const current = this.router.current;
 		this.fine.route(current && current.name);
+		this.elemental.route(current && current.name);
 		this.settings.updateContext({
 			route: current,
 			route_data: this.router.match
@@ -115,11 +134,8 @@ export default class Twilight extends BaseSite {
 		// settings window in exclusive mode.
 		const params = new URL(window.location).searchParams;
 		if ( params ) {
-			if ( params.has('ffz-settings') ) {
-				const main_menu = this.resolve('main_menu');
-				main_menu.dialog.exclusive = true;
-				main_menu.enable();
-			}
+			if ( params.has('ffz-settings') )
+				this.resolve('main_menu').openExclusive();
 
 			if ( params.has('ffz-translate') ) {
 				const translation = this.resolve('translation_ui');
@@ -159,38 +175,112 @@ export default class Twilight extends BaseSite {
 	}
 
 	getCore() {
-		if ( this._core )
-			return this._core;
+		if ( ! this._core )
+			this._core = this.web_munch.getModule('core');
 
-		let core = this.web_munch.getModule('core-1');
-		if ( core )
-			return this._core = core.o;
-
-		core = this.web_munch.getModule('core-2');
-		if ( core )
-			return this._core = core.p;
-
-		core = this.web_munch.getModule('core-3');
-		if ( core )
-			return this._core = core.q;
+		return this._core;
 	}
 }
 
 
+const CALCULATE_BITS = '_calculateChangedBits';
+
 Twilight.KNOWN_MODULES = {
 	simplebar: n => n.globalObserver && n.initDOMLoadedElements,
 	react: n => n.Component && n.createElement,
-	'core-1': n => n.o && n.o.experiments,
-	'core-2': n => n.p && n.p.experiments,
-	'core-3': n => n.q && n.q.experiments,
+	core: n => {
+		if ( n['$6']?.experiments )
+			return n['$6'];
+		if ( n.p?.experiments )
+			return n.p;
+		if ( n.o?.experiments )
+			return n.o;
+		if ( n.q?.experiments )
+			return n.q;
+	},
 	cookie: n => n && n.set && n.get && n.getJSON && n.withConverter,
 	'extension-service': n => n.extensionService,
-	'chat-types': n => n.b && has(n.b, 'Message') && has(n.b, 'RoomMods'),
-	'gql-printer': n => n !== window && n.print,
+	'chat-types': n => {
+		if ( has(n.b, 'Message') && has(n.b, 'RoomMods') )
+			return {
+				automod: n.a,
+				chat: n.b,
+				message: n.c,
+				mod: n.e
+			};
+
+		if ( has(n.SJ, 'Message') && has(n.SJ, 'RoomMods') )
+			return {
+				automod: n.mT,
+				chat: n.SJ,
+				message: n.Ay,
+				mod: n.Aw
+			};
+	},
+	'gql-printer': n => {
+		if ( n === window )
+			return;
+
+		if ( n.print && n.print.toString().includes('.visit') )
+			return n.print;
+
+		if ( n.S && n.S.toString().includes('.visit') )
+			return n.S;
+	},
 	mousetrap: n => n.bindGlobal && n.unbind && n.handleKey,
-	'algolia-search': n => n.a && n.a.prototype && n.a.prototype.queryTopResults && n.a.prototype.queryForType,
-	highlightstack: n => n.b && has(n.b, '_calculateChangedBits') && n.c && has(n.c, '_calculateChangedBits')
+	'algolia-search': n => {
+		if ( n.a?.prototype?.queryTopResults && n.a.prototype.queryForType )
+			return n.a;
+		if ( n.w9?.prototype?.queryTopResults && n.w9.prototype.queryForType )
+			return n.w9;
+	},
+	highlightstack: n => {
+		if ( has(n.b, CALCULATE_BITS) && has(n.c, CALCULATE_BITS) )
+			return {
+				stack: n.b,
+				dispatch: n.c
+			};
+
+		if ( has(n.fQ, CALCULATE_BITS) && has(n.vJ, CALCULATE_BITS) )
+			return {
+				stack: n.fQ,
+				dispatch: n.vJ
+			};
+	}
 }
+
+const VEND_CHUNK = n => n && n.includes('vendor');
+
+Twilight.KNOWN_MODULES.core.use_result = true;
+//Twilight.KNOWN_MODULES.core.chunks = 'core';
+
+Twilight.KNOWN_MODULES.simplebar.chunks = VEND_CHUNK;
+Twilight.KNOWN_MODULES.react.chunks = VEND_CHUNK;
+Twilight.KNOWN_MODULES.cookie.chunks = VEND_CHUNK;
+
+Twilight.KNOWN_MODULES['gql-printer'].use_result = true;
+Twilight.KNOWN_MODULES['gql-printer'].chunks = VEND_CHUNK;
+
+Twilight.KNOWN_MODULES.mousetrap.chunks = VEND_CHUNK;
+
+const CHAT_CHUNK = n => n && n.includes('chat');
+
+Twilight.KNOWN_MODULES['chat-types'].use_result = true;
+Twilight.KNOWN_MODULES['chat-types'].chunks = CHAT_CHUNK;
+Twilight.KNOWN_MODULES['highlightstack'].use_result = true;
+Twilight.KNOWN_MODULES['highlightstack'].chunks = CHAT_CHUNK;
+
+Twilight.KNOWN_MODULES['algolia-search'].use_result = true;
+Twilight.KNOWN_MODULES['algolia-search'].chunks = 'core';
+
+
+
+Twilight.POPOUT_ROUTES = [
+	'embed-chat',
+	'popout',
+	'dash-popout-chat',
+	'mod-popout-chat'
+];
 
 
 Twilight.CHAT_ROUTES = [
@@ -199,6 +289,7 @@ Twilight.CHAT_ROUTES = [
 	'dash-chat',
 	'video',
 	'user-video',
+	'user-home',
 	'user-clip',
 	'user-videos',
 	'user-clips',
@@ -211,7 +302,9 @@ Twilight.CHAT_ROUTES = [
 	'squad',
 	'command-center',
 	'dash-stream-manager',
-	'mod-view'
+	'dash-popout-chat',
+	'mod-view',
+	'mod-popout-chat'
 ];
 
 
@@ -221,8 +314,9 @@ Twilight.ROUTE_NAMES = {
 	'dir-all': 'Browse Live Channels',
 	'dash': 'Dashboard',
 	'popout': 'Popout Chat',
-	'dash-chat': 'Dashboard Popout Chat',
-	'user-video': 'Channel Video'
+	'dash-popout-chat': 'Dashboard Popout Chat',
+	'user-video': 'Channel Video',
+	'popout-player': 'Popout/Embed Player'
 };
 
 
@@ -247,6 +341,15 @@ Twilight.SUNLIGHT_ROUTES = [
 ];
 
 
+Twilight.PLAYER_ROUTES = {
+	'popout-player': '/'
+};
+
+Twilight.CLIP_ROUTES = {
+	'clip-page': '/:slug'
+};
+
+
 Twilight.DASH_ROUTES = {
 	'dash-stream-manager': '/u/:userName/stream-manager',
 	'dash-channel-analytics': '/u/:userName/channel-analytics',
@@ -265,6 +368,7 @@ Twilight.DASH_ROUTES = {
 	'dash-settings-revenue': '/u/:userName/settings/revenue',
 	'dash-extensions': '/u/:userName/extensions',
 	'dash-streaming-tools': '/u/:userName/broadcast',
+	'dash-popout-chat': '/popout/u/:userName/stream-manager/chat',
 };
 
 Twilight.ROUTES = {
@@ -285,7 +389,7 @@ Twilight.ROUTES = {
 	//'dash-automod': '/:userName/dashboard/settings/automod',
 	'event': '/event/:eventName',
 	'popout': '/popout/:userName/chat',
-	'dash-chat': '/popout/:userName/dashboard/live/chat',
+	//'dash-chat': '/popout/:userName/dashboard/live/chat',
 	'video': '/videos/:videoID',
 	'user-video': '/:userName/video/:videoID',
 	'user-videos': '/:userName/videos/:filter?',
@@ -298,14 +402,16 @@ Twilight.ROUTES = {
 	'product': '/products/:productName',
 	'prime': '/prime',
 	'turbo': '/turbo',
-	'user': '/:userName',
+	'search': '/search',
+	//'user': '/:userName',
 	'squad': '/:userName/squad',
 	'command-center': '/:userName/commandcenter',
 	'embed-chat': '/embed/:userName/chat',
-	'mod-view': '/moderator/:userName'
+	'mod-view': '/moderator/:userName',
+	'mod-popout-chat': '/popout/moderator/:userName/chat'
 };
 
 
 Twilight.DIALOG_EXCLUSIVE = '.moderation-root,.sunlight-root,.twilight-main,.twilight-minimal-root>div,#root>div>.tw-full-height,.clips-root';
-Twilight.DIALOG_MAXIMIZED = '.moderation-view-page > div[data-highlight-selector="main-grid"],.sunlight-page,.twilight-main,.twilight-minimal-root,#root .dashboard-side-nav+.tw-full-height,.clips-root>.tw-full-height .scrollable-area';
+Twilight.DIALOG_MAXIMIZED = '.moderation-view-page > div[data-highlight-selector="main-grid"],.sunlight-page,.twilight-main,.twilight-minimal-root,#root .dashboard-side-nav+.tw-full-height,.clips-root>.tw-full-height .scrollable-area,.teams-page-body__outer-container .scrollable-area';
 Twilight.DIALOG_SELECTOR = '.moderation-root,.sunlight-root,#root>div,.twilight-minimal-root>.tw-full-height,.clips-root>.tw-full-height .scrollable-area';

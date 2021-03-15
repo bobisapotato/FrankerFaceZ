@@ -11,13 +11,6 @@ import {get} from 'utilities/object';
 import Popper from 'popper.js';
 import {makeReference} from 'utilities/tooltip';
 
-/*import FOLLOWED_INDEX from './followed_index.gql';
-import FOLLOWED_HOSTS from './followed_hosts.gql';
-import FOLLOWED_CHANNELS from './followed_channels.gql';
-import FOLLOWED_LIVE from './followed_live.gql';
-import SUBSCRIBED_CHANNELS from './sidenav_subscribed.gql';
-import RECOMMENDED_CHANNELS from './recommended_channels.gql';*/
-
 export default class Following extends SiteModule {
 	constructor(...args) {
 		super(...args);
@@ -65,39 +58,6 @@ export default class Following extends SiteModule {
 
 			changed: () => this.parent.DirectoryCard.forceUpdate()
 		});
-
-		/*this.apollo.registerModifier('FollowedChannels_RENAME2', FOLLOWED_CHANNELS);
-		this.apollo.registerModifier('SideNav_SubscribedChannels', SUBSCRIBED_CHANNELS);
-		this.apollo.registerModifier('RecommendedChannels', RECOMMENDED_CHANNELS);
-
-		this.apollo.registerModifier('FollowedIndex_CurrentUser', FOLLOWED_INDEX);
-		this.apollo.registerModifier('FollowingLive_CurrentUser', FOLLOWED_LIVE);
-		this.apollo.registerModifier('FollowingHosts_CurrentUser', FOLLOWED_HOSTS);
-
-		this.apollo.registerModifier('FollowedChannels_RENAME2', res =>	this.modifyLiveUsers(res), false);
-		this.apollo.registerModifier('SideNav_SubscribedChannels', res => this.modifyLiveUsers(res, 'subscribedChannels'), false);
-		this.apollo.registerModifier('RecommendedChannels', res => this.modifyLiveUsers(res, 'recommendations.liveRecommendations'), false);
-
-		this.apollo.registerModifier('FollowingLive_CurrentUser', res => this.modifyLiveUsers(res), false);
-		this.apollo.registerModifier('FollowingHosts_CurrentUser', res => this.modifyLiveHosts(res), false);
-		this.apollo.registerModifier('FollowedIndex_CurrentUser', res => {
-			this.modifyLiveUsers(res);
-			this.modifyLiveHosts(res);
-		}, false);
-
-		this.apollo.registerModifier('Shelves', res => {
-			const shelves = get('data.shelves.edges', res);
-			if ( ! Array.isArray(shelves) )
-				return;
-
-			for(const shelf of shelves) {
-				const edges = get('node.content.edges', shelf);
-				if ( ! Array.isArray(edges) )
-					continue;
-
-				shelf.node.content.edges = this.parent.processNodes(edges);
-			}
-		}, false);*/
 
 		this.hosts = new WeakMap;
 	}
@@ -169,51 +129,7 @@ export default class Following extends SiteModule {
 		return res;
 	}
 
-	ensureQueries () {
-		/*this.apollo.ensureQuery(
-			'FollowedChannels_RENAME2',
-			'data.currentUser.followedLiveUsers.nodes.0.stream.createdAt'
-		);
-
-		this.apollo.ensureQuery(
-			'SideNav_SubscribedChannels',
-			'data.currentUser.subscribedChannels.edges.0.node.stream.createdAt'
-		);
-
-		this.apollo.ensureQuery(
-			'RecommendedChannels',
-			'data.currentUser.recommendations.liveRecommendations.nodes.0.createdAt'
-		);*/
-
-		/*if ( this.router.current_name !== 'dir-following' )
-			return;
-
-		const bit = this.router.match[1];
-
-		if ( ! bit )
-			this.apollo.ensureQuery(
-				'FollowedIndex_CurrentUser',
-				n =>
-					get('data.currentUser.followedLiveUsers.nodes.0.stream.createdAt', n) !== undefined ||
-					get('data.currentUser.followedHosts.nodes.0.hosting.stream.createdAt', n) !== undefined
-			);
-
-		/*else if ( bit === 'live' )
-			this.apollo.ensureQuery(
-				'FollowingLive_CurrentUser',
-				'data.currentUser.followedLiveUsers.nodes.0.stream.createdAt'
-			);*/
-
-		/*else if ( bit === 'hosts' )
-			this.apollo.ensureQuery(
-				'FollowingHosts_CurrentUser',
-				'data.currentUser.followedHosts.nodes.0.hosting.stream.createdAt'
-			);*/
-	}
-
 	onEnable() {
-		this.ensureQueries();
-
 		document.body.addEventListener('click', this.destroyHostMenu.bind(this));
 	}
 
@@ -244,7 +160,7 @@ export default class Following extends SiteModule {
 
 		// Hosted Channel Content
 		simplebarContentChildren.push(<a
-			class="tw-block tw-border-radius-small tw-full-width tw-interactable tw-interactable--alpha tw-interactive"
+			class="tw-block tw-border-radius-small tw-full-width ffz-interactable ffz-interactable--default ffz-interactable--hover-enabled tw-interactive"
 			href={`/${inst.props.channelLogin}`}
 			onClick={e => this.parent.hijackUserClick(e, inst.props.channelLogin, this.destroyHostMenu.bind(this))} // eslint-disable-line react/jsx-no-bind
 		>
@@ -266,7 +182,7 @@ export default class Following extends SiteModule {
 		// Hosting Channels Content
 		for (const channel of channels) {
 			simplebarContentChildren.push(<a
-				class="tw-block tw-border-radius-small tw-full-width tw-interactable tw-interactable--alpha tw-interactive"
+				class="tw-block tw-border-radius-small tw-full-width ffz-interactable ffz-interactable--default ffz-interactable--hover-enabled tw-interactive"
 				href={`/${channel.login}`}
 				onClick={e => this.parent.hijackUserClick(e, channel.login, this.destroyHostMenu.bind(this))} // eslint-disable-line react/jsx-no-bind
 			>
@@ -281,7 +197,7 @@ export default class Following extends SiteModule {
 			</a>);
 		}
 
-		this.hostMenu = (<div class="ffz-host-menu tw-balloon tw-block">
+		this.hostMenu = (<div class="ffz-host-menu ffz-balloon tw-block">
 			<div class="tw-border tw-elevation-1 tw-border-radius-small tw-c-background-base tw-pd-05">
 				<div class="scrollable-area" data-simplebar>
 					{simplebarContentChildren}

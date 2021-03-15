@@ -10,6 +10,7 @@ import {NEW_API, API_SERVER, WEBKIT_CSS as WEBKIT, IS_FIREFOX} from 'utilities/c
 
 import {ManagedStyle} from 'utilities/dom';
 import {has, SourcedSet, set_equals} from 'utilities/object';
+import { getBadgeCategory, fixBadgeData } from './badges';
 
 
 export default class Room {
@@ -76,7 +77,8 @@ export default class Room {
 			if ( this.manager.rooms[this._login] === this )
 				this.manager.rooms[this._login] = null;
 
-			this.manager.socket.unsubscribe(this, `room.${this.login}`);
+			if ( this.manager.socket )
+				this.manager.socket.unsubscribe(this, `room.${this.login}`);
 		}
 
 		if ( this.manager.room_ids[this._id] === this )
@@ -157,7 +159,8 @@ export default class Room {
 			const old_room = this.manager.rooms[this._login];
 			if ( old_room === this ) {
 				this.manager.rooms[this._login] = null;
-				this.manager.socket.unsubscribe(this, `room.${this.login}`);
+				if ( this.manager.socket )
+					this.manager.socket.unsubscribe(this, `room.${this.login}`);
 			}
 		}
 
@@ -172,7 +175,8 @@ export default class Room {
 		// Make sure we didn't have a funky loop thing happen.
 		this._login = val;
 		this.manager.rooms[val] = this;
-		this.manager.socket.subscribe(this, `room.${val}`);
+		if ( this.manager.socket )
+			this.manager.socket.subscribe(this, `room.${val}`);
 		this.manager.emit(':room-update-login', this, val);
 	}
 
@@ -275,6 +279,13 @@ export default class Room {
 			return false;
 		}
 
+		const old_badges = this.data?.user_badge_ids;
+		if ( old_badges )
+			for(const badge_id in old_badges )
+				if ( has(old_badges, badge_id) )
+					for(const user of old_badges[badge_id])
+						this.getUser(user, undefined).removeBadge('ffz', badge_id);
+
 		const d = data.room,
 			id = `${d.twitch_id}`;
 
@@ -305,17 +316,15 @@ export default class Room {
 				if ( has(data.sets, set_id) )
 					this.manager.emotes.loadSetData(set_id, data.sets[set_id]);
 
-
-		const badges = data.user_badges;
+		const badges = d.user_badge_ids;
 		if ( badges )
 			for(const badge_id in badges)
 				if ( has(badges, badge_id) )
 					for(const user of badges[badge_id])
-						this.getUser(undefined, user).addBadge('ffz', badge_id);
+						this.getUser(user, undefined).addBadge('ffz', badge_id);
 
-
-		if ( data.css )
-			this.style.set('css', data.css);
+		if ( d.css )
+			this.style.set('css', d.css);
 		else
 			this.style.delete('css');
 
@@ -399,7 +408,11 @@ export default class Room {
 			const b = {};
 			for(const data of badges) {
 				const sid = data.setID,
-					bs = b[sid] = b[sid] || {};
+					bs = b[sid] = b[sid] || {
+						__cat: getBadgeCategory(sid)
+					};
+
+				fixBadgeData(data);
 
 				bs[data.version] = data;
 				this.badge_count++;
@@ -446,6 +459,7 @@ export default class Room {
 			return this.style.delete('badges');
 
 		const use_media = IS_FIREFOX && this.manager.context.get('chat.badges.media-queries'),
+			can_click = this.manager.context.get('chat.badges.clickable'),
 			out = [],
 			id = this.id;
 
@@ -458,6 +472,7 @@ export default class Room {
 							selector = `[data-room-id="${id}"] .ffz-badge[data-badge="${key}"][data-version="${version}"]`;
 
 						out.push(`${selector} {
+			${can_click && (data.click_action || data.click_url) ? 'cursor:pointer;' : ''}
 			background-color: transparent;
 			filter: none;
 			${WEBKIT}mask-image: none;

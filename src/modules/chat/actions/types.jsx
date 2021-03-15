@@ -2,6 +2,87 @@
 
 import {createElement} from 'utilities/dom';
 
+
+// ============================================================================
+// Send Reply
+// ============================================================================
+
+export const reply = {
+	presets: [{
+		appearance: {
+			type: 'icon',
+			icon: 'ffz-i-reply'
+		}
+	}],
+
+	required_context: ['message'],
+
+	title: 'Reply to Message',
+	description: 'Allows you to directly reply to another user\'s message. Only functions when the Chat Replies Style is "FrankerFaceZ".',
+
+	can_self: true,
+
+	tooltip() {
+		return this.i18n.t('chat.actions.reply', 'Reply to Message')
+	},
+
+	hidden(data, message, current_room, current_user) {
+		const id = message?.id;
+		if ( typeof id !== 'string' || ! /^[0-9a-f]+-[0-9a-f]+/.test(id) )
+			return true;
+
+		if ( ! message.message || message.deleted || (current_user && current_user.login === message.user?.login) || ! current_user?.can_reply )
+			return true;
+
+		if ( message?.reply )
+			return true;
+	},
+
+	click(event, data) {
+		let line = data.line;
+		if ( ! line ) {
+			const fine = this.resolve('site.fine');
+			line = fine ? fine.searchParent(event.target, n => n.setMessageTray && n.props && n.props.message) : null;
+		}
+
+		if ( ! line )
+			return;
+
+		line.ffzOpenReply();
+	}
+}
+
+
+// ============================================================================
+// Edit Overrides
+// ============================================================================
+
+export const edit_overrides = {
+	presets: [{
+		appearance: {
+			type: 'icon',
+			icon: 'ffz-i-pencil'
+		}
+	}],
+
+	required_context: ['user'],
+
+	title: 'Change Name & Color',
+	description: 'Allows you to set local overrides for a user\'s name and color in chat.',
+
+	can_self: true,
+
+	tooltip() {
+		return this.i18n.t('chat.actions.edit_overrides', 'Change Name & Color')
+	},
+
+	click(event, data) {
+		//const ref = makeReference(event.clientX, event.clientY);
+		this.resolve('chat.overrides').renderUserEditor(data.user, event.target);
+	}
+}
+
+
 // ============================================================================
 // Open URL
 // ============================================================================
@@ -22,6 +103,8 @@ export const open_url = {
 
 	title: 'Open URL',
 	description: '{options.url}',
+
+	can_self: true,
 
 	tooltip(data) {
 		const url = this.replaceVariables(data.options.url, data);
@@ -69,6 +152,8 @@ export const chat = {
 
 	title: 'Chat Command',
 	description: '{options.command}',
+
+	can_self: true,
 
 	editor: () => import(/* webpackChunkName: 'main-menu' */ './components/edit-chat.vue'),
 

@@ -26,6 +26,23 @@ export default class Actions extends Module {
 		this.actions = {};
 		this.renderers = {};
 
+		this.settings.add('chat.actions.size', {
+			default: 16,
+			ui: {
+				path: 'Chat > Actions @{"always_list_pages": true} >> Appearance',
+				title: 'Action Size',
+				description: "How tall actions should be, in pixels. This may be affected by your browser's zoom and font size settings.",
+				component: 'setting-text-box',
+				process(val) {
+					val = parseInt(val, 10);
+					if ( isNaN(val) || ! isFinite(val) || val <= 0 )
+						return 16;
+
+					return val;
+				}
+			}
+		});
+
 		this.settings.add('chat.actions.reasons', {
 			default: [
 				{v: {text: 'One-Man Spam', i18n: 'chat.reasons.spam'}},
@@ -68,10 +85,13 @@ export default class Actions extends Module {
 				{v: {action: 'ban', appearance: {type: 'icon', icon: 'ffz-i-block'}, options: {}, display: {mod: true, mod_icons: true, deleted: false}}},
 				{v: {action: 'unban', appearance: {type: 'icon', icon: 'ffz-i-ok'}, options: {}, display: {mod: true, mod_icons: true, deleted: true}}},
 				{v: {action: 'timeout', appearance: {type: 'icon', icon: 'ffz-i-clock'}, display: {mod: true, mod_icons: true}}},
-				{v: {action: 'msg_delete', appearance: {type: 'icon', icon: 'ffz-i-trash'}, options: {}, display: {mod: true, mod_icons: true}}}
+				{v: {action: 'msg_delete', appearance: {type: 'icon', icon: 'ffz-i-trash'}, options: {}, display: {mod: true, mod_icons: true}}},
+				{v: {action: 'reply', appearance: {type: 'icon', icon: 'ffz-i-reply'}, options: {}, display: {}}}
 			],
 
 			type: 'array_merge',
+			inherit_default: true,
+
 			ui: {
 				path: 'Chat > Actions > In-Line @{"description": "Here, you can define custom actions that will appear along messages in chat. If you aren\'t seeing an action you\'ve defined here in chat, please make sure that you have enabled Mod Icons in the chat settings menu."}',
 				component: 'chat-actions',
@@ -102,6 +122,8 @@ export default class Actions extends Module {
 
 			default: [],
 			type: 'array_merge',
+			inherit_default: true,
+
 			ui: {
 				path: 'Chat > Actions > User Context @{"description": "Here, you can define custom actions that will appear in a context menu when you right-click a username in chat."}',
 				component: 'chat-actions',
@@ -130,11 +152,13 @@ export default class Actions extends Module {
 
 			default: [],
 			type: 'array_merge',
+			inherit_default: true,
+
 			ui: {
 				path: 'Chat > Actions > Room @{"description": "Here, you can define custom actions that will appear above the chat input box."}',
 				component: 'chat-actions',
 				context: ['room', 'room-mode'],
-				inline: true,
+				inline: false,
 
 				data: () => {
 					const chat = this.resolve('site.chat');
@@ -256,7 +280,7 @@ export default class Actions extends Module {
 				reason_elements.push(<li class="tw-full-width tw-relative">
 					<a
 						href="#"
-						class="tw-block tw-full-width tw-interactable tw-interactable--hover-enabled tw-interactable--inverted tw-interactive tw-pd-05"
+						class="tw-block tw-full-width ffz-interactable ffz-interactable--hover-enabled ffz-interactable--default tw-interactive tw-pd-05"
 						onClick={click_fn(text)}
 					>
 						{text}
@@ -273,7 +297,7 @@ export default class Actions extends Module {
 				reason_elements.push(<li class="tw-full-width tw-relative">
 					<a
 						href="#"
-						class="tw-block tw-full-width tw-interactable tw-interactable--hover-enabled tw-interactable--inverted tw-interactive tw-pd-05"
+						class="tw-block tw-full-width ffz-interactable ffz-interactable--hover-enabled ffz-interactable--default tw-interactive tw-pd-05"
 						onClick={click_fn(rule)}
 					>
 						{rule}
@@ -328,10 +352,13 @@ export default class Actions extends Module {
 				fp.destroy();
 			}
 
-			target._ffz_destroy = target._ffz_outside = null;
+			if ( target._ffz_on_destroy )
+				target._ffz_on_destroy();
+
+			target._ffz_destroy = target._ffz_outside = target._ffz_on_destroy = null;
 		}
 
-		const parent = document.body.querySelector('#root>div') || document.body,
+		const parent = document.fullscreenElement || document.body.querySelector('#root>div') || document.body,
 			tt = target._ffz_popup = new Tooltip(parent, target, {
 				logger: this.log,
 				manual: true,
@@ -340,9 +367,9 @@ export default class Actions extends Module {
 				hover_events: true,
 				no_update: true,
 
-				tooltipClass: 'ffz-action-balloon tw-balloon tw-block tw-border tw-elevation-1 tw-border-radius-small tw-c-background-base',
-				arrowClass: 'tw-balloon__tail tw-overflow-hidden tw-absolute',
-				arrowInner: 'tw-balloon__tail-symbol tw-border-t tw-border-r tw-border-b tw-border-l tw-border-radius-small tw-c-background-base  tw-absolute',
+				tooltipClass: 'ffz-action-balloon ffz-balloon tw-block tw-border tw-elevation-1 tw-border-radius-small tw-c-background-base',
+				arrowClass: 'ffz-balloon__tail tw-overflow-hidden tw-absolute',
+				arrowInner: 'ffz-balloon__tail-symbol tw-border-t tw-border-r tw-border-b tw-border-l tw-border-radius-small tw-c-background-base  tw-absolute',
 				innerClass: '',
 
 				popper: {
@@ -393,11 +420,38 @@ export default class Actions extends Module {
 
 
 	renderRoom(mod_icons, current_user, current_room, is_above, createElement) {
-		const actions = [],
+		const lines = [],
 			chat = this.resolve('site.chat');
+		let line = null;
 
 		for(const data of this.parent.context.get('chat.actions.room')) {
-			if ( ! data || ! data.action || ! data.appearance )
+			if ( ! data )
+				continue;
+
+			const type = data.type;
+			if ( type ) {
+				if ( type === 'new-line' ) {
+					line = null;
+
+				} else if ( type === 'space' ) {
+					if ( ! line )
+						lines.push(line = []);
+
+					line.push(<div class="tw-flex-grow-1" />);
+
+				} else if ( type === 'space-small' ) {
+					if ( ! line )
+						lines.push(line = []);
+
+					line.push(<div class="tw-mg-x-1" />);
+
+				} else
+					this.log.warn('Unknown action type', type);
+
+				continue;
+			}
+
+			if ( ! data.action || ! data.appearance )
 				continue;
 
 			let ap = data.appearance || {};
@@ -415,6 +469,9 @@ export default class Actions extends Module {
 				(disp.followersOnly != null && disp.followersOnly !== current_room.followersOnly) )
 				continue;
 
+			if ( maybe_call(act.hidden, this, data, null, current_room, current_user, mod_icons) )
+				continue;
+
 			if ( act.override_appearance ) {
 				const out = act.override_appearance.call(this, Object.assign({}, ap), data, null, current_room, current_user, mod_icons);
 				if ( out )
@@ -430,8 +487,11 @@ export default class Actions extends Module {
 				color = has_color && (chat && chat.colors ? chat.colors.process(ap.color) : ap.color),
 				contents = def.render.call(this, ap, createElement, color);
 
-			actions.push(<button
-				class={`ffz-tooltip tw-pd-x-05 ffz-mod-icon mod-icon tw-c-text-alt-2${disabled ? ' disabled' : ''}${has_color ? ' colored' : ''}`}
+			if ( ! line )
+				lines.push(line = []);
+
+			line.push(<button
+				class={`ffz-tooltip tw-pd-x-05 mod-icon ffz-mod-icon tw-c-text-alt-2${disabled ? ' disabled' : ''}${has_color ? ' colored' : ''}`}
 				data-tooltip-type="action"
 				data-action={data.action}
 				data-options={data.options ? JSON.stringify(data.options) : null}
@@ -443,13 +503,18 @@ export default class Actions extends Module {
 			</button>);
 		}
 
-		if ( ! actions.length )
+		if ( ! lines.length )
 			return null;
 
-		const room = current_room && JSON.stringify(current_room);
+		const room = current_room && JSON.stringify(current_room),
+			multi_line = lines.length > 1;
+
+		const actions = multi_line ?
+			lines.map((line, idx) => <div key={idx} class="tw-flex tw-full-width tw-flex-row tw-flex-wrap">{line}</div>) :
+			lines[0];
 
 		return (<div
-			class={`ffz--room-actions ffz-action-data tw-flex tw-flex-grow-1 tw-flex-wrap tw-align-items-center ${is_above ? 'tw-pd-y-05 tw-border-t' : 'tw-mg-x-05'}`}
+			class={`ffz--room-actions${multi_line ? ' tw-flex-column' : ''} ffz-action-data tw-flex tw-flex-grow-1 tw-flex-wrap tw-align-items-center ${is_above ? 'tw-pd-y-05 tw-border-t' : 'tw-mg-x-05'}`}
 			data-room={room}
 		>
 			{actions}
@@ -477,11 +542,16 @@ export default class Actions extends Module {
 		const u = site.getUser(),
 			r = {id: line.props.channelID, login: room};
 
+		const has_replies = line.chatRepliesTreatment ? line.chatRepliesTreatment !== 'control' : false,
+			can_replies = has_replies && ! msg.deleted && ! line.props.disableReplyClick,
+			can_reply = can_replies && u.login !== msg.user?.login && ! msg.reply;
+
 		msg.roomId = r.id;
 
 		if ( u ) {
 			u.moderator = line.props.isCurrentUserModerator;
 			u.staff = line.props.isCurrentUserStaff;
+			u.can_reply = this.parent.context.get('chat.replies.style') === 2 && can_reply;
 		}
 
 		const current_level = this.getUserLevel(r, u),
@@ -491,13 +561,15 @@ export default class Actions extends Module {
 		if ( current_level < 3 )
 			mod_icons = false;
 
+		const chat_line = line;
+
 		return this.renderPopup(target, (t, tip) => {
 			const lines = [];
 			let line = null;
 
 			const handle_click = event => {
+				this.handleClick(event, line);
 				tip.hide();
-				this.handleClick(event);
 			};
 
 			for(const data of actions) {
@@ -534,6 +606,9 @@ export default class Actions extends Module {
 					(disp.mod != null && disp.mod !== (current_level > msg_level)) ||
 					(disp.staff != null && disp.staff !== (u ? !!u.staff : false)) ||
 					(disp.deleted != null && disp.deleted !== !!msg.deleted) )
+					continue;
+
+				if ( maybe_call(act.hidden, this, data, msg, r, u, mod_icons) )
 					continue;
 
 				if ( act.override_appearance ) {
@@ -589,6 +664,7 @@ export default class Actions extends Module {
 			</div>);
 
 			out.ffz_message = msg;
+			out.ffz_line = chat_line;
 			return out;
 		});
 	}
@@ -597,11 +673,9 @@ export default class Actions extends Module {
 	renderInline(msg, mod_icons, current_user, current_room, createElement) {
 		const actions = [];
 
-		if ( msg.user && current_user && current_user.login === msg.user.login )
-			return;
-
 		const current_level = this.getUserLevel(current_room, current_user),
-			msg_level = this.getUserLevel(current_room, msg.user);
+			msg_level = this.getUserLevel(current_room, msg.user),
+			is_self = msg.user && current_user && current_user.login === msg.user.login;
 
 		if ( current_level < 3 )
 			mod_icons = false;
@@ -618,6 +692,7 @@ export default class Actions extends Module {
 			let ap = data.appearance || {};
 			const disp = data.display || {},
 				keys = disp.keys,
+				hover = disp.hover,
 				act = this.actions[data.action];
 
 			if ( ! act || disp.disabled ||
@@ -625,6 +700,12 @@ export default class Actions extends Module {
 				(disp.mod != null && disp.mod !== (current_level > msg_level)) ||
 				(disp.staff != null && disp.staff !== (current_user ? !!current_user.staff : false)) ||
 				(disp.deleted != null && disp.deleted !== !!msg.deleted) )
+				continue;
+
+			if ( is_self && ! act.can_self )
+				continue;
+
+			if ( maybe_call(act.hidden, this, data, msg, current_room, current_user, mod_icons) )
 				continue;
 
 			if ( act.override_appearance ) {
@@ -644,12 +725,12 @@ export default class Actions extends Module {
 
 			let list = actions;
 
-			if ( keys )
+			if ( keys || hover )
 				list = modified;
 
 			had_action = true;
 			list.push(<button
-				class={`ffz-tooltip ffz-mod-icon mod-icon tw-c-text-alt-2${disabled ? ' disabled' : ''}${has_color ? ' colored' : ''}${keys ? ` ffz-modifier-${keys}` : ''}`}
+				class={`ffz-tooltip mod-icon ffz-mod-icon tw-c-text-alt-2${disabled ? ' disabled' : ''}${has_color ? ' colored' : ''}${keys ? ` ffz-modifier-${keys}` : ''}${hover ? ' ffz-hover' : ''}`}
 				disabled={disabled}
 				data-tooltip-type="action"
 				data-action={data.action}
@@ -709,11 +790,12 @@ export default class Actions extends Module {
 		if ( ! definition )
 			return null;
 
-		let user, room, message, loaded = false;
+		let user, room, message, loaded = false, line;
 
 		if ( pds ) {
 			if ( pds.source === 'msg' && parent.ffz_message ) {
 				const msg = parent.ffz_message;
+				line = parent.ffz_line;
 
 				loaded = true;
 				user = msg.user ? {
@@ -735,8 +817,8 @@ export default class Actions extends Module {
 				};
 
 			} else if ( pds.source === 'line' ) {
-				const fine = this.resolve('site.fine'),
-					line = fine && fine.searchParent(parent, n => n.props && n.props.message);
+				const fine = this.resolve('site.fine');
+				line = fine && fine.searchParent(parent, n => n.props && n.props.message);
 
 				if ( line && line.props && line.props.message ) {
 					loaded = true;
@@ -778,7 +860,8 @@ export default class Actions extends Module {
 			user,
 			room,
 			message,
-			message_id: message ? message.id : null
+			message_id: message ? message.id : null,
+			line
 		};
 
 		if ( definition.defaults )
@@ -804,8 +887,8 @@ export default class Actions extends Module {
 			return this.log.warn(`No click handler for action provider "${data.action}"`);
 		}
 
-		if ( target._ffz_tooltip$0 )
-			target._ffz_tooltip$0.hide();
+		if ( target._ffz_tooltip )
+			target._ffz_tooltip.hide();
 
 		return data.definition.click.call(this, event, data);
 	}
@@ -824,8 +907,8 @@ export default class Actions extends Module {
 		if ( target.classList.contains('disabled') )
 			return;
 
-		if ( target._ffz_tooltip$0 )
-			target._ffz_tooltip$0.hide();
+		if ( target._ffz_tooltip )
+			target._ffz_tooltip.hide();
 
 		if ( ! data.definition.context && ! data.definition.uses_reason )
 			return;
@@ -844,8 +927,8 @@ export default class Actions extends Module {
 		event.preventDefault();
 
 		const target = event.target;
-		if ( target._ffz_tooltip$0 )
-			target._ffz_tooltip$0.hide();
+		if ( target._ffz_tooltip )
+			target._ffz_tooltip.hide();
 
 		this.renderUserContext(target, actions);
 	}

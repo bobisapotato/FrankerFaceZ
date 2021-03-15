@@ -4,6 +4,7 @@
 @import "./widgets/menu-container.scss";
 @import "./widgets/tab-container.scss";
 
+@import "./widgets/key-picker.scss";
 @import "./widgets/menu-tree.scss";
 @import "./widgets/profile-selector.scss";
 @import "./widgets/badge-visibility.scss";
@@ -17,13 +18,39 @@
 .tw-display-inline { display: inline !important }
 .tw-width-auto { width: auto !important }
 
+.ffz--notice {
+	a {
+		color: var(--color-text-overlay-link);
+
+		&:hover, &:hover:focus {
+			color: var(--color-text-overlay-link-hover);
+		}
+
+		&:focus {
+			color: var(--color-text-overlay-link-focus);
+		}
+	}
+}
+
 .ffz-unmatched-item { opacity: 0.25 }
 .ffz-monospace { font-family: monospace }
 .ffz-bottom-100 { bottom: 100% }
 
+.ffz--badge-term-image {
+	height: 3.6rem;
+	width: 3.6rem;
+}
+
 .ffz--autocomplete {
 	.scrollable-area {
 		max-height: 20rem;
+	}
+}
+
+.ffz-radio-top {
+	.ffz-radio__input:checked+.ffz-radio__label:after,
+	.ffz-radio__label:before {
+		top: 1rem;
 	}
 }
 
@@ -45,13 +72,57 @@
 	}
 }
 
-textarea.tw-input {
+textarea.ffz-input {
 	height: unset;
+}
+
+.ffz-pill,
+.ffz--widget .tw-pill {
+	border-radius: 1000px;
+	padding: 0.3rem 0.8em;
+	font-size: 75%;
+	background-color: var(--color-background-pill);
+	color: var(--color-text-overlay);
+	white-space: nowrap;
+	line-height: 1;
+	text-align: center;
+	display: inline-block;
+
+	&:empty { display: none }
+
+	&--alt { background-color: var(--color-fill-alt) }
+	&--alt-2 { background-color: var(--color-fill-alt-2) }
+	&--brand { background-color: var(--color-fill-brand) }
+	&--notification { background-color: var(--color-background-pill-notification) }
+	&--live { background-color: var(--color-fill-live) }
+	&--warn { background-color: var(--color-fill-warn) }
+	&--alert { background-color: var(--color-fill-alert) }
+	&--success { background-color: var(--color-fill-success) }
+	&--overlay {
+		background-color: var(--color-background-overlay);
+		box-shadow: 0 0 0 1px var(--color-border-overlay);
+	}
+
+	&--warn,
+	&--alert,
+	&--success {
+		color: var(--color-text-pill);
+	}
 }
 
 .ffz--widget {
 	input, select {
 		min-width: 20rem;
+	}
+
+	label {
+		min-width: 15rem;
+	}
+}
+
+.ffz--link-tester {
+	code {
+		tab-size: 4;
 	}
 
 	label {
@@ -119,8 +190,8 @@ textarea.tw-input {
 		opacity: 0.5;
 	}
 
-	label {
-		width: 10rem;
+	.ffz--checkbox {
+		margin-left: 15rem;
 	}
 }
 
@@ -133,8 +204,8 @@ textarea.tw-input {
 
 		&:focus {
 			box-shadow:
-				inset 0 0 0 1px var(--color-twitch-purple-8),
-				0 0 6px -2px var(--color-twitch-purple-8) !important;
+				inset 0 0 0 1px var(--ffz-color-accent-8),
+				0 0 6px -2px var(--ffz-color-accent-8) !important;
 		}
 
 		.handle {
@@ -183,8 +254,8 @@ textarea.tw-input {
 
 		&:focus {
 			box-shadow:
-				inset 0 0 0 1px var(--color-twitch-purple-8),
-				0 0 6px -2px var(--color-twitch-purple-8) !important;
+				inset 0 0 0 1px var(--ffz-color-accent-8),
+				0 0 6px -2px var(--ffz-color-accent-8) !important;
 		}
 
 		.handle {
@@ -212,8 +283,39 @@ textarea.tw-input {
 
 
 .ffz--home {
-	h2, p {
+	h2, p, table {
 		margin-bottom: 1rem;
+	}
+
+	table {
+		border: 1px solid var(--color-border-base);
+
+		thead {
+			border-bottom: 1px solid var(--color-border-base);
+		}
+
+		th {
+			font-weight: 700;
+		}
+
+		th,
+		td {
+			padding: 0.5rem;
+
+			&:not(:last-child) {
+				border-right: 1px solid var(--color-border-base);
+			}
+		}
+
+		td {
+			background-color: var(--color-background-alt);
+		}
+
+		th,
+		tr:nth-child(2n + 0) td {
+			background-color: var(--color-background-base);
+		}
+
 	}
 
 	ul {
@@ -268,6 +370,20 @@ textarea.tw-input {
 	}
 }
 
+.ffz--github-button {
+	border: 0 !important;
+	background-color: #1e2327 !important;
+	color: #fff !important;
+
+	> * {
+		pointer-events: none;
+	}
+
+	&:hover, &:focus {
+		background-color: #3b454d !important;
+	}
+}
+
 
 .ffz--changelog {
 	ul, p {
@@ -279,6 +395,25 @@ textarea.tw-input {
 	}
 }
 
+.ffz--clear-settings code,
+.ffz--experiments code {
+	user-select: none;
+	padding: 2px 5px;
+	border-radius: 2px;
+	background-color: rgba(0,0,0,0.2);
+	font-family: monospace;
+	white-space: pre;
+
+	.tw-root--theme-dark & {
+		background-color:rgba(255,255,255,0.1);
+	}
+}
+
+.ffz--clear-settings code {
+	font-size: 1.2em;
+}
+
+.ffz--home,
 .ffz--changelog,
 .ffz--widget {
 	code {
@@ -288,7 +423,7 @@ textarea.tw-input {
 		background-color: rgba(0,0,0,0.1);
 
 		.tw-root--theme-dark & {
-			background-color: rgba(255,255,255,0.05);
+			background-color: rgba(255,255,255,0.1);
 		}
 	}
 }
@@ -315,13 +450,18 @@ textarea.tw-input {
 	background-color: transparent !important;
 	color: #000 !important;
 
-	@include button-colors(#6441a4, #9a7fcc, #fff, #7d5bbc);
+	@include button-colors(
+		var(--color-background-button-hover),
+		var(--color-border-button-hover),
+		var(--color-text-button-hover),
+		var(--color-border-button-hover)
+	);
 
 	.tw-root--theme-dark & {
 		border-color: #424242 !important;
 		color: #dadada !important;
 
-		@include button-colors(#7d5bbe, #9a7fcc, #eeeeee, #7d5bbe)
+		//@include button-colors(#7d5bbe, #9a7fcc, #eeeeee, #7d5bbe)
 	}
 }
 
@@ -359,6 +499,16 @@ textarea.tw-input {
 			white-space: pre-wrap;
 			word-break: break-all;
 		}
+	}
+}
+
+.ffz-override-editor {
+	label {
+		min-width: 5rem;
+	}
+
+	.ffz--color-widget {
+		flex-grow: 1;
 	}
 }
 

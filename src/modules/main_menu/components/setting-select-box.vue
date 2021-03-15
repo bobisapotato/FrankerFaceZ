@@ -12,7 +12,7 @@
 			<select
 				:id="item.full_key"
 				ref="control"
-				class="tw-border-radius-medium tw-font-size-6 tw-select tw-pd-l-1 tw-pd-r-3 tw-pd-y-05 tw-mg-05"
+				class="tw-border-radius-medium tw-font-size-6 ffz-select tw-pd-l-1 tw-pd-r-3 tw-pd-y-05 tw-mg-05"
 				@change="onChange"
 			>
 				<template v-for="i in nested_data">
@@ -60,7 +60,7 @@
 				</span>
 			</button>
 
-			<button v-if="has_value" class="tw-mg-l-05 tw-button tw-button--text tw-tooltip-wrapper" @click="clear">
+			<button v-if="has_value" class="tw-mg-l-05 tw-button tw-button--text tw-tooltip__container" @click="clear">
 				<span class="tw-button__text ffz-i-cancel" />
 				<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-right">
 					{{ t('setting.reset', 'Reset to Default') }}

@@ -27,6 +27,19 @@
 				</span>
 			</div>
 		</section>
+		<section v-if="context.currentProfile.url && ! context.currentProfile.pause_updates && item.profile_warning !== false" class="tw-border-t tw-pd-t-1 tw-pd-b-2">
+			<div class="tw-c-background-accent tw-c-text-overlay tw-pd-1">
+				<h3 class="ffz-i-attention">
+					{{ t('setting.profiles.updates', 'This profile will update automatically.') }}
+				</h3>
+
+				<span>
+					{{ t('setting.profile.updates-about',
+						'This profile is set to automatically update. When it does, any changed settings within it will be reset. Profile Rules will be reset as well.')
+					}}
+				</span>
+			</div>
+		</section>
 		<section v-if="context.has_update" class="tw-border-t tw-pd-t-1 tw-pd-b-2">
 			<div class="tw-c-background-accent tw-c-text-overlay tw-pd-1">
 				<h3 class="ffz-i-arrows-cw">
@@ -44,7 +57,7 @@
 		>
 			<markdown :source="t(item.desc_i18n_key || `${item.i18n_key}.description`, item.description)" />
 		</section>
-		<template v-if="! item.contents || ! item.contents.length">
+		<template v-if="! item.contents || ! item.contents.length || item.always_list_pages">
 			<ul class="tw-border-t tw-pd-y-1">
 				<li
 					v-for="i in item.items"
@@ -69,6 +82,7 @@
 				ref="children"
 				:context="context"
 				:item="i"
+				:nav_keys="nav_keys"
 				:filter="filter"
 				@change-item="changeItem"
 				@mark-seen="markSeen"
@@ -81,7 +95,7 @@
 <script>
 
 export default {
-	props: ['item', 'context', 'filter'],
+	props: ['item', 'context', 'filter', 'nav_keys'],
 
 	computed: {
 		breadcrumbs() {
@@ -117,12 +131,13 @@ export default {
 		},
 
 		onBeforeChange(current, new_item) {
-			for(const child of this.$refs.children)
-				if ( child && child.onBeforeChange ) {
-					const res = child.onBeforeChange(current, new_item);
-					if ( res !== undefined )
-						return res;
-				}
+			if ( this.$refs.children )
+				for(const child of this.$refs.children)
+					if ( child && child.onBeforeChange ) {
+						const res = child.onBeforeChange(current, new_item);
+						if ( res !== undefined )
+							return res;
+					}
 		}
 	}
 }

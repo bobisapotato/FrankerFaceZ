@@ -6,17 +6,19 @@
 
 import Module from 'utilities/module';
 import {createElement} from 'utilities/dom';
-import {get, has, deep_copy} from 'utilities/object';
+import {get, has, deep_copy, set_equals} from 'utilities/object';
 
 import Dialog from 'utilities/dialog';
 
-import Mixin from './setting-mixin';
+import SettingMixin from './setting-mixin';
+import ProviderMixin from './provider-mixin';
 
-import {parse_path} from 'src/settings';
+import {NO_SYNC_KEYS, parse_path} from 'src/settings';
 
 function format_term(term) {
 	return term.replace(/<[^>]*>/g, '').toLocaleLowerCase();
 }
+
 
 // TODO: Rewrite literally everything about the menu to use a router and further
 // separate the concept of navigation from visible pages.
@@ -32,10 +34,12 @@ export default class MainMenu extends Module {
 
 		this.load_requires = ['vue'];
 
-		this.Mixin = Mixin;
+		this.Mixin = this.SettingMixin = SettingMixin;
+		this.ProviderMixin = ProviderMixin;
 
 		//this.should_enable = true;
 
+		this.exclusive = false;
 		this.new_seen = false;
 
 		this._settings_tree = null;
@@ -45,6 +49,8 @@ export default class MainMenu extends Module {
 		this.has_update = false;
 		this.opened = false;
 		this.showing = false;
+
+		this.context = this.settings.context();
 
 		this.settings.addUI('profiles', {
 			path: 'Data Management @{"sort": 1000, "profile_warning": false} > Profiles @{"profile_warning": false}',
@@ -57,15 +63,99 @@ export default class MainMenu extends Module {
 			getFFZ: () => this.resolve('core')
 		});
 
+		this.settings.addUI('clear', {
+			path: 'Data Management > Storage @{"profile_warning": false} >> tabs ~> Clear',
+			component: 'clear-settings',
+			force_seen: true
+		});
+
+		this.settings.addUI('provider', {
+			path: 'Data Management > Storage >> tabs ~> Provider',
+			component: 'provider',
+			force_seen: true
+		});
+
 		this.settings.addUI('home', {
 			path: 'Home @{"sort": -1000, "profile_warning": false}',
-			component: 'home-page'
+			component: 'home-page',
+			requestPage: page => this.requestPage(page),
+			getUnseen: () => {
+				if ( ! this.unseen?.size )
+					return null;
+
+				const categories = {},
+					out = [];
+
+				let i = 0;
+
+				for(const item of this.unseen) {
+					const def = this.settings.definitions.get(item) || this.settings.ui_structures.get(item);
+					if ( ! def || ! def.ui || ! def.ui.path_tokens )
+						continue;
+
+					const path = def.ui.path,
+						title = def.ui.title;
+
+					i++;
+					if ( i > 20 )
+						break;
+
+					if ( ! categories[path] ) {
+						const key = def.ui.path_tokens.map(x => x.key).join('.');
+						const tokens = [];
+
+						let cat = this._settings_tree[key];
+						while ( cat ) {
+							tokens.unshift({
+								i18n: cat.i18n_key,
+								title: cat.title
+							});
+
+							if ( cat.parent ) {
+								if ( cat.page || cat.tab )
+									tokens.unshift({title: '>>'});
+								else
+									tokens.unshift({title: '>'});
+							}
+
+							cat = this._settings_tree[cat.parent];
+						}
+
+						out.push(categories[path] = {
+							key,
+							tokens,
+							entries: []
+						});
+					}
+
+					if ( ! path || ! title )
+						continue;
+
+					categories[path].entries.push({
+						key: item,
+						i18n: def.ui.i18n_key ?? `setting.entry.${item}`,
+						title
+					});
+				}
+
+				if ( ! out.length )
+					return null;
+
+				return out;
+			}
 		});
 
 		this.settings.addUI('faq', {
 			path: 'Home > FAQ @{"profile_warning": false}',
 			component: 'md-page',
 			key: 'faq'
+		});
+
+		this.settings.addUI('chat.filtering.syntax-help', {
+			path: 'Chat > Filtering > Syntax Help @{"profile_warning": false}',
+			component: 'md-page',
+			key: 'term-syntax',
+			force_seen: true
 		});
 
 		/*this.settings.addUI('privacy', {
@@ -133,9 +223,9 @@ export default class MainMenu extends Module {
 		this.scheduleUpdate();
 	}
 
-	openPopout() {
+	openPopout(item) {
 		const win = window.open(
-			'https://twitch.tv/popout/frankerfacez/chat?ffz-settings',
+			`https://twitch.tv/popout/frankerfacez/chat?ffz-settings${item ? `=${encodeURIComponent(item)}` : ''}`,
 			'_blank',
 			'resizable=yes,scrollbars=yes,width=850,height=600'
 		);
@@ -164,18 +254,27 @@ export default class MainMenu extends Module {
 		this.on('i18n:update', this.scheduleUpdate, this);
 
 		this.dialog.on('show', () => {
+			if ( this.dialog.maximized )
+				this.runFix(1);
+
 			this.showing = true;
 			this.opened = true;
 			this.updateButtonUnseen();
 			this.emit('show')
 		});
 		this.dialog.on('hide', () => {
+			if ( this.dialog.maximized )
+				this.runFix(-1);
+
 			this.showing = false;
 			this.emit('hide');
 			this.destroyDialog();
 		});
 
 		this.dialog.on('resize', () => {
+			if ( this.dialog.visible )
+				this.runFix(this.dialog.maximized ? 1 : -1);
+
 			if ( this._vue )
 				this._vue.$children[0].maximized = this.dialog.maximized
 		});
@@ -187,6 +286,84 @@ export default class MainMenu extends Module {
 	onDisable() {
 		this.dialog.hide();
 		this.off('site.menu_button:clicked', this.dialog.toggleVisible, this.dialog);
+	}
+
+
+	mdNavigate(thing) {
+		const path = thing?.dataset?.settingsLink;
+		if ( ! path )
+			return;
+
+		this.requestPage(path);
+	}
+
+
+	updateContext(context) {
+		if ( ! context )
+			context = this._context;
+
+		this._context = context;
+
+		if ( this.use_context ) {
+			if ( ! this.context._updateContext ) {
+				this.context._updateContext = this.context.updateContext;
+				this.context.updateContext = function(context) {
+					const accepted = {};
+					for(const key of NO_SYNC_KEYS)
+						if ( has(context, key) )
+							accepted[key] = context[key];
+
+					this._updateContext(accepted);
+				}
+			}
+
+			this.context._context = {};
+			this.context._updateContext({
+				...context,
+				can_proxy: context?.proxied || false
+			});
+
+		} else {
+			if ( this.context._updateContext ) {
+				this.context.updateContext = this.context._updateContext;
+				this.context._updateContext = null;
+			}
+
+			this.context.setContext({can_proxy: context?.proxied || false});
+		}
+	}
+
+
+	openExclusive() {
+		window.addEventListener('message', event => {
+			const type = event.data?.ffz_type;
+
+			if ( type === 'context-update' )
+				this.updateContext({...event.data.ctx, proxied: true});
+
+			else if ( type === 'context-gone' ) {
+				this.log.info('Context proxy gone.');
+				this.updateContext({proxied: false});
+			}
+		});
+
+		try {
+			window.opener.postMessage({
+				ffz_type: 'request-context'
+			}, '*');
+		} catch(err) {
+			this.log.info('Unable to request settings context from opener.');
+		}
+
+		this.exclusive = true;
+		this.dialog.exclusive = true;
+		this.enable().then(() => this.dialog.show());
+	}
+
+	runFix(amount) {
+		this.settings.updateContext({
+			force_chat_fix: (this.settings.get('context.force_chat_fix') || 0) + amount
+		});
 	}
 
 
@@ -237,7 +414,10 @@ export default class MainMenu extends Module {
 		if ( this._update_timer )
 			return;
 
-		this._update_timer = setTimeout(() => this.updateLiveMenu(), 250);
+		this._update_timer = setTimeout(() => {
+			// Make sure i18n is loaded before we try this.
+			this.i18n.enable().then(() => this.updateLiveMenu());
+		}, 250);
 	}
 
 
@@ -260,14 +440,41 @@ export default class MainMenu extends Module {
 		const root = this._vue.$children[0],
 			item = root.currentItem,
 			key = item && item.full_key,
+			wants_old = ! root.restoredItem,
+			state = window.history.state,
 
 			tree = this.getSettingsTree();
 
 		root.nav = tree;
 		root.nav_keys = tree.keys;
-		root.currentItem = tree.keys[key] || (this._wanted_page && tree.keys[this._wanted_page]) || (this.has_update ?
-			tree.keys['home.changelog'] :
-			tree.keys['home']);
+
+		let current, restored = true;
+
+		if ( this._wanted_page )
+			current = tree.keys[this._wanted_page];
+
+		if ( ! current && wants_old ) {
+			if ( state?.ffzcc )
+				current = tree.keys[state.ffzcc];
+			if ( ! current ) {
+				const params = new URL(window.location).searchParams,
+					key = params?.get?.('ffz-settings');
+				current = key && tree.keys[key];
+			}
+			if ( ! current )
+				restored = false;
+		}
+
+		if ( ! current )
+			current = tree.keys[key];
+
+		if ( ! current )
+			current = this.has_update ?
+				tree.keys['home.changelog'] :
+				tree.keys['home'];
+
+		root.currentItem = current;
+		root.restoredItem = restored;
 
 		this._wanted_page = null;
 	}
@@ -343,6 +550,7 @@ export default class MainMenu extends Module {
 
 		const tree = this._settings_tree,
 			settings_seen = this.new_seen ? null : this.settings.provider.get('cfg-seen'),
+			unseen = settings_seen ? new Set : null,
 			new_seen = settings_seen ? null : [],
 
 			collapsed = this.settings.provider.get('cfg-collapsed'),
@@ -428,6 +636,7 @@ export default class MainMenu extends Module {
 
 						if ( settings_seen ) {
 							if ( ! settings_seen.includes(setting_key) && ! tok.force_seen ) {
+								unseen.add(setting_key);
 								let i = tok;
 								while(i) {
 									i.unseen = (i.unseen || 0) + 1;
@@ -519,6 +728,11 @@ export default class MainMenu extends Module {
 			this.settings.provider.set('cfg-collapsed', new_collapsed);
 		}
 
+		if ( ! set_equals(unseen, this.unseen) ) {
+			this.unseen = unseen;
+			this.emit(':update-unseen');
+		}
+
 		this.log.info(`Built Tree in ${(performance.now() - started).toFixed(5)}ms with ${Object.keys(tree).length} structure nodes and ${this._settings_count} settings nodes.`);
 		return items;
 	}
@@ -528,7 +742,7 @@ export default class MainMenu extends Module {
 		const profiles = [],
 			keys = {};
 
-		context = context || this.settings.main_context;
+		context = context || this.context;
 
 		for(const profile of this.settings.__profiles)
 			profiles.push(keys[profile.id] = this.getProfileProxy(profile, context));
@@ -552,13 +766,15 @@ export default class MainMenu extends Module {
 			description: profile.description,
 			desc_i18n_key: profile.desc_i18n_key || profile.i18n_key && `${profile.i18n_key}.description`,
 
+			hotkey: profile.hotkey,
 			url: profile.url,
+			pause_updates: profile.pause_updates,
 
 			move: idx => context.manager.moveProfile(profile.id, idx),
 			save: () => profile.save(),
 			update: data => {
-				profile.data = deep_copy(data)
-				profile.save()
+				profile.data = deep_copy(data);
+				profile.save();
 			},
 
 			toggle: () => profile.toggled = ! profile.toggled,
@@ -581,123 +797,182 @@ export default class MainMenu extends Module {
 		const t = this,
 			Vue = this.vue.Vue,
 			settings = this.settings,
-			context = settings.main_context,
+			provider = settings.provider,
+			context = this.context,
 			[profiles, profile_keys] = this.getProfiles(),
+			state = window.history.state,
+			profile_id = state?.ffzccp;
 
-			_c = {
-				profiles,
-				profile_keys,
-				currentProfile: profile_keys[0],
+		let currentProfile = profile_keys[0];
+		if ( profile_id != null )
+			currentProfile = profile_keys[profile_id];
 
-				has_update: this.has_update,
+		if ( ! currentProfile ) {
+			for(let i=profiles.length - 1; i >= 0; i--) {
+				if ( profiles[i].live ) {
+					currentProfile = profiles[i];
+					break;
+				}
+			}
 
-				createProfile: data => {
-					const profile = settings.createProfile(data);
-					return t.getProfileProxy(profile, context);
-				},
+			if ( ! currentProfile )
+				currentProfile = profiles[0];
+		}
 
-				deleteProfile: profile => settings.deleteProfile(profile),
+		const _c = {
+			profiles,
+			profile_keys,
+			currentProfile,
 
-				context: {
-					_users: 0,
+			exclusive: this.exclusive,
+			can_proxy: context._context.can_proxy,
+			proxied: context._context.proxied,
+			has_update: this.has_update,
+			mod_icons: context.get('context.chat.showModIcons'),
 
-					profiles: context.__profiles.map(profile => profile.id),
-					get: key => context.get(key),
-					uses: key => context.uses(key),
+			setProxied: val => {
+				this.use_context = val;
+				this.updateContext();
+			},
 
-					on: (...args) => context.on(...args),
-					off: (...args) => context.off(...args),
+			createProfile: data => {
+				const profile = settings.createProfile(data);
+				return t.getProfileProxy(profile, context);
+			},
 
-					order: id => context.order.indexOf(id),
-					context: deep_copy(context._context),
+			deleteProfile: profile => settings.deleteProfile(profile),
 
-					_update_profiles(changed) {
-						const new_list = [],
-							profiles = context.manager.__profiles;
+			getFFZ: () => t.resolve('core'),
 
-						for(let i=0; i < profiles.length; i++) {
-							const profile = profile_keys[profiles[i].id];
+			provider: {
+				unwrap: () => provider,
+				get: (...args) => provider.get(...args),
+				set: (...args) => provider.set(...args),
+				delete: (...args) => provider.delete(...args),
+				has: (...args) => provider.has(...args),
+				on: (...args) => provider.on(...args),
+				off: (...args) => provider.off(...args)
+			},
+
+			context: {
+				_users: 0,
+
+				profiles: context.__profiles.map(profile => profile.id),
+				get: key => context.get(key),
+				uses: key => context.uses(key),
+
+				on: (...args) => context.on(...args),
+				off: (...args) => context.off(...args),
+
+				order: id => context.order.indexOf(id),
+				context: deep_copy(context._context),
+
+				_update_profiles(changed) {
+					const new_list = [],
+						profiles = context.manager.__profiles;
+
+					for(let i=0; i < profiles.length; i++) {
+						const profile = profile_keys[profiles[i].id];
+						if ( profile ) {
 							profile.order = i;
-
 							new_list.push(profile);
 						}
+					}
 
-						Vue.set(_c, 'profiles', new_list);
+					Vue.set(_c, 'profiles', new_list);
 
-						if ( changed && changed.id === _c.currentProfile.id )
-							_c.currentProfile = profile_keys[changed.id];
-					},
+					if ( changed && changed.id === _c.currentProfile.id )
+						_c.currentProfile = profile_keys[changed.id];
+				},
 
-					_profile_created(profile) {
-						Vue.set(profile_keys, profile.id, t.getProfileProxy(profile, context));
-						this._update_profiles()
-					},
+				_profile_created(profile) {
+					Vue.set(profile_keys, profile.id, t.getProfileProxy(profile, context));
+					this._update_profiles()
+				},
 
-					_profile_changed(profile) {
-						Vue.set(profile_keys, profile.id, t.getProfileProxy(profile, context));
-						this._update_profiles(profile);
-					},
+				_profile_changed(profile) {
+					Vue.set(profile_keys, profile.id, t.getProfileProxy(profile, context));
+					this._update_profiles(profile);
+				},
 
-					_profile_toggled(profile, val) {
-						Vue.set(profile_keys[profile.id], 'toggled', val);
-						this._update_profiles(profile);
-					},
+				_profile_toggled(profile, val) {
+					Vue.set(profile_keys[profile.id], 'toggled', val);
+					this._update_profiles(profile);
+				},
 
-					_profile_deleted(profile) {
-						Vue.delete(profile_keys, profile.id);
-						this._update_profiles();
+				_profile_deleted(profile) {
+					Vue.delete(profile_keys, profile.id);
+					this._update_profiles();
 
-						if ( _c.currentProfile.id === profile.id )
-							_c.currentProfile = profile_keys[0]
-					},
+					if ( _c.currentProfile.id === profile.id ) {
+						_c.currentProfile = profile_keys[0];
+						if ( ! _c.currentProfile ) {
+							for(let i=_c.profiles.length - 1; i >= 0; i--) {
+								if ( _c.profiles[i].live ) {
+									_c.currentProfile = _c.profiles[i];
+									break;
+								}
+							}
 
-					_context_changed() {
-						this.context = deep_copy(context._context);
-						const profiles = context.manager.__profiles,
-							ids = this.profiles = context.__profiles.map(profile => profile.id);
-
-						for(let i=0; i < profiles.length; i++) {
-							const id = profiles[i].id,
-								profile = profile_keys[id];
-
-							profile.live = ids.includes(id);
-						}
-					},
-
-					_add_user() {
-						this._users++;
-						if ( this._users === 1 ) {
-							settings.on(':profile-toggled', this._profile_toggled, this);
-							settings.on(':profile-created', this._profile_created, this);
-							settings.on(':profile-changed', this._profile_changed, this);
-							settings.on(':profile-deleted', this._profile_deleted, this);
-							settings.on(':profiles-reordered', this._update_profiles, this);
-							context.on('context_changed', this._context_changed, this);
-							context.on('profiles_changed', this._context_changed, this);
-							this.profiles = context.__profiles.map(profile => profile.id);
-						}
-					},
-
-					_remove_user() {
-						this._users--;
-						if ( this._users === 0 ) {
-							settings.off(':profile-toggled', this._profile_toggled, this);
-							settings.off(':profile-created', this._profile_created, this);
-							settings.off(':profile-changed', this._profile_changed, this);
-							settings.off(':profile-deleted', this._profile_deleted, this);
-							settings.off(':profiles-reordered', this._update_profiles, this);
-							context.off('context_changed', this._context_changed, this);
-							context.off('profiles_changed', this._context_changed, this);
+							if ( ! _c.currentProfile )
+								_c.currentProfile = _c.profiles[0];
 						}
 					}
+				},
+
+				_context_changed() {
+					this.context = deep_copy(context._context);
+					const profiles = context.manager.__profiles,
+						ids = this.profiles = context.__profiles.map(profile => profile.id);
+
+					_c.proxied = this.context.proxied;
+					_c.can_proxy = this.context.can_proxy;
+					_c.mod_icons = context.get('context.chat.showModIcons');
+
+					for(let i=0; i < profiles.length; i++) {
+						const id = profiles[i].id,
+							profile = profile_keys[id];
+
+						profile.live = ids.includes(id);
+					}
+				},
+
+				_add_user() {
+					this._users++;
+					if ( this._users === 1 ) {
+						settings.on(':profile-toggled', this._profile_toggled, this);
+						settings.on(':profile-created', this._profile_created, this);
+						settings.on(':profile-changed', this._profile_changed, this);
+						settings.on(':profile-deleted', this._profile_deleted, this);
+						settings.on(':profiles-reordered', this._update_profiles, this);
+						context.on('context_changed', this._context_changed, this);
+						context.on('profiles_changed', this._context_changed, this);
+						this.profiles = context.__profiles.map(profile => profile.id);
+					}
+				},
+
+				_remove_user() {
+					this._users--;
+					if ( this._users === 0 ) {
+						settings.off(':profile-toggled', this._profile_toggled, this);
+						settings.off(':profile-created', this._profile_created, this);
+						settings.off(':profile-changed', this._profile_changed, this);
+						settings.off(':profile-deleted', this._profile_deleted, this);
+						settings.off(':profiles-reordered', this._update_profiles, this);
+						context.off('context_changed', this._context_changed, this);
+						context.off('profiles_changed', this._context_changed, this);
+					}
 				}
-			};
+			}
+		};
 
 		return _c;
 	}
 
 	markSeen(item, seen) {
-		let had_seen = true;
+		let had_seen = true,
+			changed = false;
+
 		if ( ! seen ) {
 			had_seen = false;
 			seen = this.settings.provider.get('cfg-seen', []);
@@ -705,12 +980,15 @@ export default class MainMenu extends Module {
 
 		if ( Array.isArray(item.contents) ) {
 			for(const child of item.contents)
-				child && this.markSeen(child, seen);
-
+				changed = (child && this.markSeen(child, seen)) || changed;
 		}
 
 		if ( item.setting ) {
+			if ( this.unseen )
+				this.unseen.delete(item.setting);
+
 			if ( ! seen.includes(item.setting) ) {
+				changed = true;
 				seen.push(item.setting);
 
 				let i = item.parent;
@@ -721,8 +999,12 @@ export default class MainMenu extends Module {
 			}
 		}
 
-		if ( ! had_seen )
+		if ( ! had_seen && changed ) {
 			this.settings.provider.set('cfg-seen', seen);
+			this.emit(':update-unseen');
+		}
+
+		return changed;
 	}
 
 	markAllSeen(thing, seen) {
@@ -760,14 +1042,36 @@ export default class MainMenu extends Module {
 		if ( thing.unseen )
 			thing.unseen = 0;
 
-		if ( ! had_seen )
+		if ( ! had_seen ) {
 			this.settings.provider.set('cfg-seen', seen);
+			this.unseen = null;
+			this.emit(':update-unseen');
+		}
 	}
 
 	getData() {
 		const settings = this.getSettingsTree(),
 			context = this.getContext(),
-			current = (this._wanted_page && settings.keys[this._wanted_page]) || (this.has_update ? settings.keys['home.changelog'] : settings.keys['home']);
+			state = window.history.state;
+
+		let current, restored = true;
+		if ( this._wanted_page )
+			current = settings.keys[this._wanted_page];
+		if ( ! current && state?.ffzcc ) {
+			current = settings.keys[state.ffzcc];
+			if ( ! current )
+				restored = false;
+		} if ( ! current ) {
+			const params = new URL(window.location).searchParams,
+				key = params?.get?.('ffz-settings');
+			current = key && settings.keys[key];
+			if ( ! current )
+				restored = false;
+		}
+		if ( ! current )
+			current = this.has_update ?
+				settings.keys['home.changelog'] :
+				settings.keys['home'];
 
 		this._wanted_page = null;
 		this.markSeen(current);
@@ -788,6 +1092,7 @@ export default class MainMenu extends Module {
 
 			nav: settings,
 			currentItem: current,
+			restoredItem: true, // restored, -- Look into making this smoother later.
 			nav_keys: settings.keys,
 
 			has_unseen,
@@ -824,17 +1129,17 @@ export default class MainMenu extends Module {
 
 			close: e => ! this.dialog.exclusive && this.dialog.toggleVisible(e),
 
-			popout: e => {
-				if ( this.dialog.exclusive )
-					return;
-
-				this.dialog.toggleVisible(e);
-				if ( ! this.openPopout() )
-					alert(this.i18n.t('popup.error', 'We tried opening a pop-up window and could not. Make sure to allow pop-ups from Twitch.')); // eslint-disable-line no-alert
-			},
-
 			version: window.FrankerFaceZ.version_info,
 		};
+
+		out.popout = e => {
+			if ( this.dialog.exclusive )
+				return;
+
+			this.dialog.toggleVisible(e);
+			if ( ! this.openPopout(out.currentItem?.full_key) )
+				alert(this.i18n.t('popup.error', 'We tried opening a pop-up window and could not. Make sure to allow pop-ups from Twitch.')); // eslint-disable-line no-alert
+		}
 
 		return out;
 	}

@@ -25,25 +25,34 @@ export default class AddonManager extends Module {
 		this.inject('settings');
 		this.inject('i18n');
 
+		this.load_requires = ['settings'];
+
+		this.target = this.parent.flavor || 'unknown';
+
 		this.has_dev = false;
 		this.reload_required = false;
 		this.addons = {};
 		this.enabled_addons = [];
 	}
 
-	async onEnable() {
+	onLoad() {
+		this._loader = this.loadAddonData();
+	}
+
+	onEnable() {
 		this.settings.addUI('add-ons', {
 			path: 'Add-Ons @{"description": "Add-Ons are additional modules, often written by other people, that can be loaded automatically by FrankerFaceZ to add new capabilities and behaviors to the extension and Twitch.", "profile_warning": false}',
 			component: 'addon-list',
 			title: 'Add-Ons',
 			no_filter: true,
 
-			getExtraSearch: () => Object.values(this.addons).map(addon => addon.search_terms),
+			getExtraTerms: () => Object.values(this.addons).map(addon => addon.search_terms),
 
 			isReady: () => this.enabled,
 			getAddons: () => Object.values(this.addons),
 			hasAddon: id => this.hasAddon(id),
 			getVersion: id => this.getVersion(id),
+			doesAddonTarget: id => this.doesAddonTarget(id),
 			isAddonEnabled: id => this.isAddonEnabled(id),
 			isAddonExternal: id => this.isAddonExternal(id),
 			enableAddon: id => this.enableAddon(id),
@@ -69,17 +78,32 @@ export default class AddonManager extends Module {
 
 		this.settings.provider.on('changed', this.onProviderChange, this);
 
-		await this.loadAddonData();
-		this.enabled_addons = this.settings.provider.get('addons.enabled', []);
+		this._loader.then(() => {
+			this.enabled_addons = this.settings.provider.get('addons.enabled', []);
 
-		// We do not await enabling add-ons because that would delay the
-		// main script's execution.
-		for(const id of this.enabled_addons)
-			if ( this.hasAddon(id) )
-				this._enableAddon(id);
+			// We do not await enabling add-ons because that would delay the
+			// main script's execution.
+			for(const id of this.enabled_addons)
+				if ( this.hasAddon(id) && this.doesAddonTarget(id) )
+					this._enableAddon(id);
 
-		this.emit(':ready');
+			this.emit(':ready');
+		});
 	}
+
+
+	doesAddonTarget(id) {
+		const data = this.addons[id];
+		if ( ! data )
+			return false;
+
+		const targets = data.targets ?? ['main'];
+		if ( ! Array.isArray(targets) )
+			return false;
+
+		return targets.includes(this.target);
+	}
+
 
 	generateLog() {
 		const out = ['Known'];
@@ -148,6 +172,12 @@ export default class AddonManager extends Module {
 		addon.dev = is_dev;
 		addon.requires = addon.requires || [];
 		addon.required_by = Array.isArray(old) ? old : old && old.required_by || [];
+
+		if ( addon.updated )
+			addon.updated = new Date(addon.updated);
+
+		if ( addon.created )
+			addon.created = new Date(addon.created);
 
 		addon._search = addon.search_terms;
 
@@ -316,7 +346,8 @@ export default class AddonManager extends Module {
 			this.settings.provider.set('addons.enabled', this.enabled_addons);
 
 		// Actually load it.
-		this._enableAddon(id);
+		if ( this.doesAddonTarget(id) )
+			this._enableAddon(id);
 	}
 
 	async disableAddon(id, save = true) {

@@ -13,7 +13,7 @@
 			<div class="tw-flex tw-flex-column tw-full-height tw-full-width viewer-card__overlay">
 				<div class="tw-align-center tw-align-items-start tw-c-background-overlay tw-c-text-overlay tw-flex tw-flex-grow-1 tw-flex-row tw-full-width tw-justify-content-start tw-pd-05 tw-relative viewer-card__banner">
 					<div class="tw-mg-l-05 tw-mg-y-05 tw-inline-flex viewer-card-drag-cancel">
-						<figure class="tw-avatar tw-avatar--size-50">
+						<figure class="ffz-avatar ffz-avatar--size-50">
 							<img
 								v-if="loaded"
 								:src="user.profileImageURL"
@@ -75,7 +75,7 @@
 						<button
 							:data-title="t('viewer-card.close', 'Close')"
 							:aria-label="t('viewer-card.close', 'Close')"
-							class="viewer-card-drag-cancel tw-align-items-center tw-align-middle tw-border-radius-medium tw-button-icon tw-button-icon--overlay tw-core-button tw-core-button--overlay tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden tw-relative ffz-tooltip"
+							class="viewer-card-drag-cancel tw-align-items-center tw-align-middle tw-border-radius-medium tw-button-icon tw-button-icon--overlay ffz-core-button ffz-core-button--overlay tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden tw-relative ffz-tooltip"
 							@click="close"
 						>
 							<span class="tw-button-icon__icon">
@@ -86,7 +86,7 @@
 							v-if="! pinned"
 							:data-title="t('viewer-card.pin', 'Pin')"
 							:aria-label="t('viewer-card.pin', 'Pin')"
-							class="viewer-card-drag-cancel tw-align-items-center tw-align-middle tw-border-radius-medium tw-button-icon tw-button-icon--overlay tw-core-button tw-core-button--overlay tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden tw-relative ffz-tooltip"
+							class="viewer-card-drag-cancel tw-align-items-center tw-align-middle tw-border-radius-medium tw-button-icon tw-button-icon--overlay ffz-core-button ffz-core-button--overlay tw-inline-flex tw-interactive tw-justify-content-center tw-overflow-hidden tw-relative ffz-tooltip"
 							@click="pin"
 						>
 							<span class="tw-button-icon__icon">

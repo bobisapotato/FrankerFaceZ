@@ -61,7 +61,6 @@ export default class Emotes extends Module {
 
 		this.EmoteTypes = EmoteTypes;
 
-		this.inject('socket');
 		this.inject('settings');
 		this.inject('experiments');
 
@@ -83,6 +82,16 @@ export default class Emotes extends Module {
 		this.emote_sets = {};
 		this._set_refs = {};
 		this._set_timers = {};
+
+		this.settings.add('chat.emotes.2x', {
+			default: false,
+			ui: {
+				path: 'Chat > Appearance >> Emotes',
+				title: 'Larger Emotes',
+				description: 'This setting will make emotes appear twice as large in chat. It\'s good for use with larger fonts or just if you really like emotes.',
+				component: 'setting-check-box'
+			}
+		});
 
 		this.settings.add('chat.fix-bad-emotes', {
 			default: true,
@@ -154,7 +163,7 @@ export default class Emotes extends Module {
 				}
 		}
 
-		this.socket.on(':command:follow_sets', this.updateFollowSets, this);
+		this.on('socket:command:follow_sets', this.updateFollowSets, this);
 
 		this.loadGlobalSets();
 	}
@@ -191,6 +200,52 @@ export default class Emotes extends Module {
 						this.loadSet(set_id);
 				}
 			}
+	}
+
+
+	// ========================================================================
+	// Hidden Checking
+	// ========================================================================
+
+	toggleHidden(source, id, value = null) {
+		const key = `hidden-emotes.${source}`,
+			p = this.settings.provider,
+			hidden = p.get(key, []),
+
+			idx = hidden.indexOf(id);
+
+		if ( value === null )
+			value = idx === -1;
+
+		if ( value && idx === -1 )
+			hidden.push(id);
+		else if ( ! value && idx !== -1 )
+			hidden.splice(idx, 1);
+		else
+			return;
+
+		if ( hidden.length )
+			p.set(key, hidden);
+		else
+			p.delete(key);
+
+		this.emit(':change-hidden', source, id, value);
+	}
+
+	isHidden(source, id) {
+		return this.getHidden(source).includes(id);
+	}
+
+	getHidden(source) {
+		return this.settings.provider.get(`hidden-emotes.${source}`) || [];
+	}
+
+	setHidden(source, list) {
+		const key = `hidden-emotes.${source}`;
+		if ( ! Array.isArray(list) || ! list.length )
+			this.settings.provider.delete(key);
+		else
+			this.settings.provider.set(key, list);
 	}
 
 
@@ -340,7 +395,7 @@ export default class Emotes extends Module {
 				return;
 
 			this.toggleFavorite(source, id);
-			const tt = target._ffz_tooltip$0;
+			const tt = target._ffz_tooltip;
 			if ( tt && tt.visible ) {
 				tt.hide();
 				setTimeout(() => document.contains(target) && tt.show(), 0);
@@ -354,14 +409,15 @@ export default class Emotes extends Module {
 			if ( ! fine )
 				return;
 
-			const chat = fine.searchParent(target, n => n.props && n.props.onEmoteClick);
-			if ( ! chat || ! chat.props || ! chat.props.message )
+			const line = fine.searchParent(target, n => n.props && n.props.message),
+				opener = fine.searchParent(target, n => n.onShowEmoteCard, 200);
+
+			if ( ! line || ! opener )
 				return;
 
-			const props = chat.props;
-			props.onEmoteClick({
-				channelID: props.channelID || '',
-				channelLogin: props.channelLogin || '',
+			opener.onShowEmoteCard({
+				channelID: line.props.channelID || '',
+				channelLogin: line.props.channelLogin || '',
 				emoteID: ds.id,
 				emoteCode: target.alt,
 				sourceID: 'chat',
@@ -674,6 +730,14 @@ export default class Emotes extends Module {
 			if ( emote.urls[4] )
 				emote.srcSet += `, ${emote.urls[4]} 4x`;
 
+			if ( emote.urls[2] ) {
+				emote.can_big = true;
+				emote.src2 = emote.urls[2];
+				emote.srcSet2 = `${emote.urls[2]} 1x`;
+				if ( emote.urls[4] )
+					emote.srcSet2 += `, ${emote.urls[4]} 2x`;
+			}
+
 			emote.token = {
 				type: 'emote',
 				id: emote.id,
@@ -681,8 +745,12 @@ export default class Emotes extends Module {
 				provider: 'ffz',
 				src: emote.urls[1],
 				srcSet: emote.srcSet,
+				can_big: !! emote.urls[2],
+				src2: emote.src2,
+				srcSet2: emote.srcSet2,
 				text: emote.hidden ? '???' : emote.name,
-				length: emote.name.length
+				length: emote.name.length,
+				height: emote.height
 			};
 
 			if ( has(MODIFIERS, emote.id) )

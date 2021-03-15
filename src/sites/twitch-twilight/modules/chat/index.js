@@ -4,9 +4,8 @@
 // Chat Hooks
 // ============================================================================
 
-import {ColorAdjuster} from 'utilities/color';
-import {setChildren} from 'utilities/dom';
-import {get, has, make_enum, split_chars, shallow_object_equals, set_equals, deep_equals} from 'utilities/object';
+import {Color, ColorAdjuster} from 'utilities/color';
+import {get, has, make_enum, shallow_object_equals, set_equals, deep_equals} from 'utilities/object';
 import {WEBKIT_CSS as WEBKIT} from 'utilities/constants';
 import {FFZEvent} from 'utilities/events';
 
@@ -22,7 +21,7 @@ import Input from './input';
 import ViewerCards from './viewer_card';
 
 
-const REGEX_EMOTES = {
+/*const REGEX_EMOTES = {
 	'B-?\\)': ['B)', 'B-)'],
 	'R-?\\)': ['R)', 'R-)'],
 	'[oO](_|\\.)[oO]': ['o_o', 'O_o', 'o_O', 'O_O', 'o.o', 'O.o', 'o.O', 'O.O'],
@@ -42,13 +41,12 @@ const REGEX_EMOTES = {
 	'\\&lt\\;\\]': ['<]'],
 	'\\:-?(S|s)': [':s', ':S', ':-s', ':-S'],
 	'\\:\\&gt\\;': [':>']
-};
+};*/
 
 
 const MESSAGE_TYPES = make_enum(
 	'Post',
-	'Action',
-	'PostWithMention'
+	'Action'
 );
 
 const MOD_TYPES = make_enum(
@@ -68,6 +66,26 @@ const AUTOMOD_TYPES = make_enum(
 	'MessageModApproved',
 	'MessageModDenied'
 );
+
+const UNBLOCKABLE_TYPES = [
+	'Message',
+	'Notice',
+	'Moderation',
+	'ModerationAction',
+	'TargetedModerationAction',
+	'AutoMod',
+	'SubscriberOnlyMode',
+	'FollowerOnlyMode',
+	'SlowMode',
+	'EmoteOnlyMode',
+	'R9KMode',
+	'Connected',
+	'Disconnected',
+	'Reconnect',
+	'RoomMods',
+	'RoomState',
+	'BadgesUpdated'
+]
 
 const CHAT_TYPES = make_enum(
 	'Message',
@@ -116,7 +134,10 @@ const CHAT_TYPES = make_enum(
 	'FirstCheerMessage',
 	'BitsBadgeTierMessage',
 	'InlinePrivateCallout',
-	'ChannelPointsReward'
+	'ChannelPointsReward',
+	'CommunityChallengeContribution',
+	'CelebrationPurchase',
+	'LiveMessageSeparator'
 );
 
 
@@ -144,12 +165,14 @@ export default class ChatHook extends Module {
 
 		this.inject('settings');
 		this.inject('i18n');
+		this.inject('experiments');
 
 		this.inject('site');
 		this.inject('site.router');
 		this.inject('site.fine');
 		this.inject('site.web_munch');
 		this.inject('site.css_tweaks');
+		this.inject('site.subpump');
 
 		this.inject('chat');
 
@@ -190,11 +213,13 @@ export default class ChatHook extends Module {
 			Twilight.CHAT_ROUTES
 		);
 
-		/*this.PinnedCheer = this.fine.define(
-			'pinned-cheer',
-			n => n.collapseCheer && n.saveRenderedMessageRef,
+		this.joined_raids = new Set;
+
+		this.RaidController = this.fine.define(
+			'raid-controller',
+			n => n.handleLeaveRaid && n.handleJoinRaid,
 			Twilight.CHAT_ROUTES
-		);*/
+		);
 
 		this.InlineCallout = this.fine.define(
 			'inline-callout',
@@ -246,6 +271,52 @@ export default class ChatHook extends Module {
 
 		// Settings
 
+		this.settings.add('chat.filtering.blocked-types', {
+			default: [],
+			type: 'array_merge',
+			always_inherit: true,
+			process(ctx, val) {
+				const out = new Set;
+				for(const v of val)
+					if ( v?.v || ! UNBLOCKABLE_TYPES.includes(v.v) )
+						out.add(v.v);
+
+				return out;
+			},
+
+			ui: {
+				path: 'Chat > Filtering > Block >> Message Types @{"description":"This filter allows you to remove all messages of a certain type from Twitch chat. It can be used to filter system messages, such as Hosts or Raids. Some types, such as moderation actions, cannot be blocked to prevent chat functionality from breaking."}',
+				component: 'blocked-types',
+				data: () => Object
+					.keys(this.chat_types)
+					.filter(key => ! UNBLOCKABLE_TYPES.includes(key) && ! /^\d+$/.test(key))
+			}
+		});
+
+		this.settings.add('chat.replies.style', {
+			default: 1,
+			ui: {
+				path: 'Chat > Appearance >> Replies',
+				title: 'Style',
+				description: `Twitch's default style adds a floating button to the right and displays a notice above messages that are replies. FrankerFaceZ uses an In-Line Chat Action (that can be removed in [Chat > Actions > In-Line](~chat.actions.in_line)) and uses an in-line mention to denote replies.`,
+				component: 'setting-select-box',
+				data: [
+					{value: 0, title: 'Disabled'},
+					{value: 1, title: 'Twitch (Default)'},
+					{value: 2, title: 'FrankerFaceZ'}
+				]
+			}
+		});
+
+		this.settings.add('channel.raids.no-autojoin', {
+			default: false,
+			ui: {
+				path: 'Channel > Behavior >> Raids',
+				title: 'Do not automatically join raids.',
+				component: 'setting-check-box'
+			}
+		});
+
 		this.settings.add('chat.hide-community-highlights', {
 			default: false,
 			ui: {
@@ -283,6 +354,15 @@ export default class ChatHook extends Module {
 			}
 		});
 
+		this.settings.add('chat.banners.prediction', {
+			default: true,
+			ui: {
+				path: 'Chat > Appearance >> Community',
+				title: 'Allow Predictions to be displayed in chat.',
+				component: 'setting-check-box'
+			}
+		});
+
 		this.settings.add('chat.community-chest.show', {
 			default: true,
 			ui: {
@@ -293,11 +373,16 @@ export default class ChatHook extends Module {
 		});
 
 		this.settings.add('chat.points.allow-highlight', {
-			default: true,
+			default: 2,
 			ui: {
 				path: 'Chat > Channel Points >> Appearance',
 				title: 'Highlight the message in chat when someone redeems Highlight My Message.',
-				component: 'setting-check-box'
+				component: 'setting-select-box',
+				data: [
+					{value: 0, title: 'Disabled'},
+					{value: 1, title: 'Twitch Style'},
+					{value: 2, title: 'FFZ Style'}
+				]
 			}
 		});
 
@@ -321,6 +406,13 @@ export default class ChatHook extends Module {
 
 		this.settings.add('chat.points.show-rewards', {
 			default: true,
+			requires: ['layout.portrait-min-chat'],
+			process(ctx, val) {
+				if ( ctx.get('layout.portrait-min-chat') )
+					return false;
+
+				return val;
+			},
 			ui: {
 				path: 'Chat > Channel Points >> Behavior',
 				title: 'Allow available rewards to appear next to the Channel Points button.',
@@ -355,9 +447,9 @@ export default class ChatHook extends Module {
 		});
 
 		this.settings.add('chat.use-width', {
-			requires: ['chat.width', 'context.ui.rightColumnExpanded'],
+			requires: ['chat.width', 'context.ui.rightColumnExpanded', 'context.isWatchParty'],
 			process(ctx) {
-				if ( ! ctx.get('context.ui.rightColumnExpanded') )
+				if ( ! ctx.get('context.ui.rightColumnExpanded') || ctx.get('context.isWatchParty') )
 					return false;
 
 				return ctx.get('chat.width') != 340;
@@ -377,7 +469,7 @@ export default class ChatHook extends Module {
 			ui: {
 				path: 'Chat > Appearance >> Community',
 				title: 'Display Leaderboard',
-				description: 'The leaderboard shows the top cheerers and sub gifters in a channel.\n\nBy default due to a previous implementation, this inherits its value from Chat > Bits and Cheering > Display Bits.',
+				description: 'The leaderboard shows the top cheerers and sub gifters in a channel.\n\nBy default due to a previous implementation, this inherits its value from [Chat > Bits and Cheering > Display Bits](~chat.bits_and_cheering).',
 				component: 'setting-check-box'
 			}
 		});
@@ -403,7 +495,7 @@ export default class ChatHook extends Module {
 		this.settings.add('chat.rituals.show', {
 			default: true,
 			ui: {
-				path: 'Chat > Filtering >> Rituals',
+				path: 'Chat > Filtering > General >> Rituals',
 				title: 'Display ritual messages such as "User is new here! Say Hello!".',
 				component: 'setting-check-box'
 			}
@@ -494,6 +586,15 @@ export default class ChatHook extends Module {
 				]
 			}
 		});
+
+		this.settings.add('chat.input.show-mod-view', {
+			default: true,
+			ui: {
+				path: 'Chat > Input >> Appearance',
+				title: 'Display the Mod View button in relevant channels.',
+				component: 'setting-check-box'
+			}
+		});
 	}
 
 	get currentChat() {
@@ -512,13 +613,35 @@ export default class ChatHook extends Module {
 			c = this.colors,
 			ic = this.inverse_colors;
 
+		let chat_dark = is_dark,
+			chat_color = Color.RGBA.fromCSS(
+				this.chat.context.get('theme.color.chat-background') ||
+				this.chat.context.get('theme.color.background')
+			);
+
+		if ( chat_color )
+			chat_dark = chat_color.toHSLA().l < 0.5;
+
+		chat_color = chat_dark ? '#191919' : '#E0E0E0';
+
+		let text_dark = ! chat_dark,
+			chat_text = Color.RGBA.fromCSS(
+				this.chat.context.get('theme.color.chat-text') ||
+				this.chat.context.get('theme.color.text')
+			);
+
+		if ( chat_text )
+			text_dark = chat_text.toHSLA().l < 0.5;
+
+		chat_text = text_dark ? '#19171c' : '#dad8de';
+
 		// TODO: Get the background color from the theme system.
 		// Updated: Use the lightest/darkest colors from alternating rows for better readibility.
-		c._base = is_dark ? '#191919' : '#e0e0e0'; //#0e0c13' : '#faf9fa';
+		c._base = chat_color; // is_dark ? '#191919' : '#e0e0e0'; //#0e0c13' : '#faf9fa';
 		c.mode = mode;
 		c.contrast = contrast;
 
-		ic._base = is_dark ? '#dad8de' : '#19171c';
+		ic._base = chat_text; // is_dark ? '#dad8de' : '#19171c';
 		ic.mode = mode;
 		ic.contrast = contrast;
 
@@ -538,6 +661,8 @@ export default class ChatHook extends Module {
 		this._update_css_waiter = null;
 
 		const width = this.chat.context.get('chat.width'),
+			action_size = this.chat.context.get('chat.actions.size'),
+			ts_size = this.chat.context.get('chat.timestamp-size'),
 			size = this.chat.context.get('chat.font-size'),
 			emote_alignment = this.chat.context.get('chat.lines.emote-alignment'),
 			lh = Math.round((20/12) * size);
@@ -546,13 +671,19 @@ export default class ChatHook extends Module {
 		if ( font.indexOf(' ') !== -1 && font.indexOf(',') === -1 && font.indexOf('"') === -1 && font.indexOf("'") === -1 )
 			font = `"${font}"`;
 
+		if ( ts_size )
+			this.css_tweaks.set('ts-size', `.chat-line__timestamp{font-size:${ts_size/10}rem}`);
+		else
+			this.css_tweaks.delete('ts-size');
+
+		this.css_tweaks.setVariable('chat-actions-size', `${action_size/10}rem`);
 		this.css_tweaks.setVariable('chat-font-size', `${size/10}rem`);
 		this.css_tweaks.setVariable('chat-line-height', `${lh/10}rem`);
 		this.css_tweaks.setVariable('chat-font-family', font);
 		this.css_tweaks.setVariable('chat-width', `${width/10}rem`);
 		this.css_tweaks.setVariable('negative-chat-width', `${-width/10}rem`);
 
-		this.css_tweaks.toggle('chat-font', size !== 12 || font);
+		this.css_tweaks.toggle('chat-font', size !== 13 || font !== 'inherit');
 		this.css_tweaks.toggle('chat-width', this.settings.get('chat.use-width'));
 
 		this.css_tweaks.toggle('emote-alignment-padded', emote_alignment === 1);
@@ -560,6 +691,7 @@ export default class ChatHook extends Module {
 
 		this.emit(':update-chat-css');
 		this.emit('site.player:fix-player');
+		this.emit('site.layout:resize');
 	}
 
 	updateLineBorders() {
@@ -611,27 +743,32 @@ export default class ChatHook extends Module {
 
 
 	async grabTypes() {
-		const ct = await this.web_munch.findModule('chat-types'),
-			changes = [];
+		if ( this.types_loaded )
+			return;
 
-		this.automod_types = ct && ct.a || AUTOMOD_TYPES;
-		this.chat_types = ct && ct.b || CHAT_TYPES;
-		this.message_types = ct && ct.c || MESSAGE_TYPES;
-		this.mod_types = ct && ct.e || MOD_TYPES;
+		const ct = await this.web_munch.findModule('chat-types');
+
+		this.automod_types = ct?.automod || AUTOMOD_TYPES;
+		this.chat_types = ct?.chat || CHAT_TYPES;
+		this.message_types = ct?.message || MESSAGE_TYPES;
+		this.mod_types = ct?.mod || MOD_TYPES;
 
 		if ( ! ct )
 			return;
 
-		if ( ct.a && ! shallow_object_equals(ct.a, AUTOMOD_TYPES) )
+		this.types_loaded = true;
+		const changes = [];
+
+		if ( ! shallow_object_equals(this.automod_types, AUTOMOD_TYPES) )
 			changes.push('AUTOMOD_TYPES');
 
-		if ( ct.b && ! shallow_object_equals(ct.b, CHAT_TYPES) )
+		if ( ! shallow_object_equals(this.chat_types, CHAT_TYPES) )
 			changes.push('CHAT_TYPES');
 
-		if ( ct.c && ! shallow_object_equals(ct.c, MESSAGE_TYPES) )
+		if ( ! shallow_object_equals(this.message_types, MESSAGE_TYPES) )
 			changes.push('MESSAGE_TYPES');
 
-		if ( ct.e && ! shallow_object_equals(ct.e, MOD_TYPES) )
+		if ( ! shallow_object_equals(this.mod_types, MOD_TYPES) )
 			changes.push('MOD_TYPES');
 
 		if ( changes.length )
@@ -658,16 +795,23 @@ export default class ChatHook extends Module {
 		this.chat.context.on('changed:chat.banners.hype-train', this.cleanHighlights, this);
 		this.chat.context.on('changed:chat.subs.gift-banner', this.cleanHighlights, this);
 		this.chat.context.on('changed:chat.banners.polls', this.cleanHighlights, this);
+		this.chat.context.on('changed:chat.banners.prediction', this.cleanHighlights, this);
 
 		this.chat.context.on('changed:chat.subs.gift-banner', () => this.GiftBanner.forceUpdate(), this);
 		this.chat.context.on('changed:chat.width', this.updateChatCSS, this);
 		this.settings.main_context.on('changed:chat.use-width', this.updateChatCSS, this);
+		this.chat.context.on('changed:chat.actions.size', this.updateChatCSS, this);
 		this.chat.context.on('changed:chat.font-size', this.updateChatCSS, this);
+		this.chat.context.on('changed:chat.timestamp-size', this.updateChatCSS, this);
 		this.chat.context.on('changed:chat.font-family', this.updateChatCSS, this);
 		this.chat.context.on('changed:chat.lines.emote-alignment', this.updateChatCSS, this);
 		this.chat.context.on('changed:chat.adjustment-mode', this.updateColors, this);
 		this.chat.context.on('changed:chat.adjustment-contrast', this.updateColors, this);
 		this.chat.context.on('changed:theme.is-dark', this.updateColors, this);
+		this.chat.context.on('changed:theme.color.background', this.updateColors, this);
+		this.chat.context.on('changed:theme.color.chat-background', this.updateColors, this);
+		this.chat.context.on('changed:theme.color.text', this.updateColors, this);
+		this.chat.context.on('changed:theme.color.chat-text', this.updateColors, this);
 		this.chat.context.on('changed:chat.lines.borders', this.updateLineBorders, this);
 		this.chat.context.on('changed:chat.filtering.highlight-mentions', this.updateMentionCSS, this);
 		this.chat.context.on('changed:chat.filtering.highlight-tokens', this.updateMentionCSS, this);
@@ -676,7 +820,9 @@ export default class ChatHook extends Module {
 		this.chat.context.on('changed:chat.points.allow-highlight', this.updateChatLines, this);
 		this.chat.context.on('changed:chat.filtering.display-deleted', this.updateChatLines, this);
 		this.chat.context.on('changed:chat.filtering.display-mod-action', this.updateChatLines, this);
+		this.chat.context.on('changed:chat.replies.style', this.updateChatLines, this);
 		this.chat.context.on('changed:chat.filtering.clickable-mentions', val => this.css_tweaks.toggle('clickable-mentions', val));
+		this.chat.context.on('changed:chat.filtering.bold-mentions', val => this.css_tweaks.toggle('chat-mention-no-bold', ! val));
 		this.chat.context.on('changed:chat.pin-resubs', val => {
 			if ( val ) {
 				this.updateInlineCallouts();
@@ -689,6 +835,8 @@ export default class ChatHook extends Module {
 			this.CalloutSelector.forceUpdate();
 		}, this);
 
+		this.chat.context.on('changed:chat.input.show-mod-view', val => this.css_tweaks.toggleHide('mod-view', ! val));
+		this.css_tweaks.toggleHide('mod-view', ! this.chat.context.get('chat.input.show-mod-view'));
 
 		this.chat.context.on('changed:chat.lines.alternate', val => {
 			this.css_tweaks.toggle('chat-rows', val);
@@ -713,6 +861,7 @@ export default class ChatHook extends Module {
 		this.css_tweaks.toggle('chat-deleted-fade', val < 2);
 
 		this.css_tweaks.toggle('clickable-mentions', this.chat.context.get('chat.filtering.clickable-mentions'));
+		this.css_tweaks.toggle('chat-mention-no-bold', ! this.chat.context.get('chat.filtering.bold-mentions'));
 
 		this.chat.context.on('changed:chat.hide-community-highlights', val => this.css_tweaks.toggleHide('community-highlights', val));
 
@@ -726,6 +875,13 @@ export default class ChatHook extends Module {
 		this.updateColors();
 		this.updateLineBorders();
 		this.updateMentionCSS();
+
+		this.RaidController.on('mount', this.wrapRaidController, this);
+		this.RaidController.on('update', this.noAutoRaids, this);
+		this.RaidController.ready((cls, instances) => {
+			for(const inst of instances)
+				this.wrapRaidController(inst);
+		});
 
 		this.InlineCallout.on('mount', this.onInlineCallout, this);
 		this.InlineCallout.on('update', this.onInlineCallout, this);
@@ -1000,7 +1156,7 @@ export default class ChatHook extends Module {
 
 
 		this.ChatContainer.on('mount', this.containerMounted, this);
-		this.ChatContainer.on('unmount', this.removeRoom, this);
+		this.ChatContainer.on('unmount', this.containerUnmounted, this); //removeRoom, this);
 		this.ChatContainer.on('update', this.containerUpdated, this);
 
 		this.ChatContainer.ready((cls, instances) => {
@@ -1047,14 +1203,78 @@ export default class ChatHook extends Module {
 				this.containerMounted(inst);
 		});
 
+		this.subpump.on(':pubsub-message', event => {
+			if ( event.prefix !== 'community-points-channel-v1' )
+				return;
 
-		/*this.PinnedCheer.on('mount', this.fixPinnedCheer, this);
-		this.PinnedCheer.on('update', this.fixPinnedCheer, this);
+			const service = this.ChatService.first,
+				message = event.message,
+				data = message?.data?.redemption;
+			if ( ! message || ! service || message.type !== 'reward-redeemed' || service.props.channelID != data?.channel_id )
+				return;
 
-		this.PinnedCheer.ready((cls, instances) => {
-			for(const inst of instances)
-				this.fixPinnedCheer(inst);
-		});*/
+			if ( data.user_input )
+				return;
+
+			const reward = data.reward?.id && get(data.reward.id, service.props.rewardMap);
+			if ( ! reward )
+				return;
+
+			if ( ! this.chat.context.get('chat.filtering.blocked-types').has('ChannelPointsReward') ) {
+				const msg = {
+					id: data.id,
+					type: this.chat_types.Message,
+					ffz_type: 'points',
+					ffz_reward: reward,
+					messageParts: [],
+					user: {
+						id: data.user.id,
+						login: data.user.login,
+						displayName: data.user.display_name
+					},
+					timestamp: new Date(message.data.timestamp || data.redeemed_at).getTime()
+				};
+
+				service.postMessageToCurrentChannel({}, msg);
+			}
+
+			event.preventDefault();
+		});
+	}
+
+
+	wrapRaidController(inst) {
+		if ( inst._ffz_wrapped )
+			return this.noAutoRaids(inst);
+
+		inst._ffz_wrapped = true;
+
+		const t = this,
+			old_handle_join = inst.handleJoinRaid;
+
+		inst.handleJoinRaid = function(event, ...args) {
+			const raid_id = inst.props && inst.props.raid && inst.props.raid.id;
+			if ( event && event.type && raid_id )
+				t.joined_raids.add(raid_id);
+
+			return old_handle_join.call(this, event, ...args);
+		}
+
+		this.noAutoRaids(inst);
+	}
+
+	noAutoRaids(inst) {
+		if ( this.settings.get('channel.raids.no-autojoin') )
+			setTimeout(() => {
+				if ( inst.props && inst.props.raid && ! inst.isRaidCreator && inst.hasJoinedCurrentRaid ) {
+					const id = inst.props.raid.id;
+					if ( this.joined_raids.has(id) )
+						return;
+
+					this.log.info('Automatically leaving raid:', id);
+					inst.handleLeaveRaid();
+				}
+			});
 	}
 
 
@@ -1063,6 +1283,7 @@ export default class ChatHook extends Module {
 			'community_sub_gift': this.chat.context.get('chat.subs.gift-banner'),
 			'megacheer': this.chat.context.get('chat.bits.show'),
 			'hype_train': this.chat.context.get('chat.banners.hype-train'),
+			'prediction': this.chat.context.get('chat.banners.prediction'),
 			'poll': this.chat.context.get('chat.banners.polls')
 		};
 
@@ -1090,15 +1311,15 @@ export default class ChatHook extends Module {
 
 		const t = this,
 			React = this.web_munch.getModule('react'),
-			Stack = this.web_munch.getModule('highlightstack'),
-			createElement = React && React.createElement;
+			createElement = React && React.createElement,
+			StackMod = this.web_munch.getModule('highlightstack');
 
-		if ( ! createElement || ! Stack || ! Stack.b )
+		if ( ! createElement || ! StackMod )
 			return false;
 
 		this.CommunityStackHandler = function() {
-			const stack = React.useContext(Stack.b),
-				dispatch = React.useContext(Stack.c);
+			const stack = React.useContext(StackMod.stack),
+				dispatch = React.useContext(StackMod.dispatch);
 
 			t.community_stack = stack;
 			t.community_dispatch = dispatch;
@@ -1218,7 +1439,11 @@ export default class ChatHook extends Module {
 				if ( msg ) {
 					try {
 						const types = t.chat_types || {},
-							mod_types = t.mod_types || {};
+							mod_types = t.mod_types || {},
+							blocked_types = t.chat.context.get('chat.filtering.blocked-types');
+
+						if ( blocked_types.has(types[msg.type]) )
+							return;
 
 						if ( msg.type === types.RewardGift && ! t.chat.context.get('chat.bits.show-rewards') )
 							return;
@@ -1256,7 +1481,7 @@ export default class ChatHook extends Module {
 							if ( event.defaultPrevented || m.ffz_removed )
 								return;
 
-						} else if ( msg.type === types.ModerationAction && inst.markUserEventDeleted && inst.unsetModeratedUser ) {
+						} else if ( msg.type === types.ModerationAction && false && inst.markUserEventDeleted && inst.unsetModeratedUser ) {
 							if ( !((! msg.level || ! msg.level.length) && msg.targetUserLogin && msg.targetUserLogin === inst.props.currentUserLogin) ) {
 								//t.log.info('Moderation Action', msg);
 								if ( ! inst.props.isCurrentUserModerator )
@@ -1279,13 +1504,15 @@ export default class ChatHook extends Module {
 										if ( len !== inst.buffer.length && ! inst.props.isBackground )
 											inst.notifySubscribers();
 
-										inst.ffzModerateBuffer([inst.delayedMessageBuffer], msg);
+										inst.moderateBuffers([
+											inst.delayedMessageBuffer.map(e => e.event)
+										], user, msg);
 
 									} else
-										inst.ffzModerateBuffer([inst.buffer, inst.delayedMessageBuffer], msg);
-
-									inst.moderatedUsers.add(user);
-									setTimeout(inst.unsetModeratedUser(user), 1e3);
+										inst.moderateBuffers([
+											inst.buffer,
+											inst.delayedMessageBuffer.map(e => e.event)
+										], user, msg);
 
 									inst.delayedMessageBuffer.push({
 										event: msg,
@@ -1297,7 +1524,7 @@ export default class ChatHook extends Module {
 								}
 							}
 
-						} else if ( msg.type === types.Moderation && inst.markUserEventDeleted && inst.unsetModeratedUser ) {
+						} else if ( msg.type === types.Moderation && false && inst.unsetModeratedUser ) {
 							//t.log.info('Moderation', msg);
 							if ( inst.props.isCurrentUserModerator )
 								return;
@@ -1331,13 +1558,15 @@ export default class ChatHook extends Module {
 								if ( len !== inst.buffer.length && ! inst.props.isBackground )
 									inst.notifySubscribers();
 
-								inst.ffzModerateBuffer([inst.delayedMessageBuffer], msg);
+								inst.moderateBuffers([
+									inst.delayedMessageBuffer.map(e => e.event)
+								], user, msg);
 
 							} else
-								inst.ffzModerateBuffer([inst.buffer, inst.delayedMessageBuffer], msg);
-
-							inst.moderatedUsers.add(user);
-							setTimeout(inst.unsetModeratedUser(user), 1e3);
+								inst.moderateBuffers([
+									inst.buffer,
+									inst.delayedMessageBuffer.map(e => e.event)
+								], user, msg);
 
 							inst.delayedMessageBuffer.push({
 								event: msg,
@@ -1364,8 +1593,9 @@ export default class ChatHook extends Module {
 				return old_handle.call(inst, msg);
 			}
 
-			inst.ffzModerateBuffer = function(buffers, event) {
+			/*inst.ffzModerateBuffer = function(buffers, event) {
 				const mod_types = t.mod_types || {},
+					ctypes = t.chat_types || {},
 					mod_type = event.moderationActionType,
 					user_login = event.targetUserLogin || event.userLogin,
 					mod_login = event.createdByLogin,
@@ -1378,22 +1608,35 @@ export default class ChatHook extends Module {
 						if ( m.event )
 							m = m.event;
 
+						/*if ( m.message && m.type in [ctypes.ChannelPointsReward, ctypes.Resubscription, ctypes.Ritual] )
+							m = m.message;/
+
+						if ( m.reply ) {
+							if ( target_id ? target_id === m.reply.parentMsgId : (user_login && user_login === m.reply.parentUserLogin) )
+								m.reply = {
+									...m.reply,
+									parentDeleted: true
+								}
+						}
+
+						if ( ! user_login || ! m.user || user_login !== m.user.userLogin || ! m.messageParts )
+							return;
+
+						if ( ! m || m.deleted )
+							return;
+
 						if ( target_id && m.id !== target_id )
 							return;
 
-						const msg = inst.markUserEventDeleted(m, user_login);
-						if ( ! msg )
-							return;
+						m.deleted = true;
+						m.banned = mod_type === mod_types.Ban;
 
-						last_msg = msg;
+						last_msg = m;
 						deleted_count++;
 
-						msg.modLogin = mod_login;
-						msg.modActionType = mod_type;
-						msg.duration = event.duration;
-
-						if ( is_delete )
-							return true;
+						m.modLogin = mod_login;
+						m.modActionType = mod_type;
+						m.duration = event.duration;
 					};
 
 				for(const buffer of buffers)
@@ -1404,7 +1647,7 @@ export default class ChatHook extends Module {
 
 				if ( last_msg )
 					last_msg.deletedCount = deleted_count;
-			}
+			}*/
 
 			inst.setPaused = function(paused) {
 				if ( inst.paused === paused )
@@ -1508,6 +1751,7 @@ export default class ChatHook extends Module {
 		cls.prototype.flushRawMessages = function() {
 			try {
 				const out = [],
+					ct = t.chat_types || CHAT_TYPES,
 					now = Date.now(),
 					raw_delay = t.chat.context.get('chat.delay'),
 					delay = raw_delay === -1 ? this.delayDuration : raw_delay,
@@ -1526,6 +1770,18 @@ export default class ChatHook extends Module {
 					if ( msg.time <= first || ! msg.shouldDelay ) {
 						if ( do_remove !== 0 && (do_remove > 1 || ! see_deleted) && this.isDeletable(msg.event) && msg.event.deleted )
 							continue;
+
+						const last = this.buffer[this.buffer.length - 1],
+							type = last?.type;
+
+						if ( type === ct.Connected ) {
+							const non_null = this.buffer.filter(x => x && ct[x.type] && ! NULL_TYPES.includes(ct[x.type]));
+							if ( non_null.length > 1 )
+								this.buffer.push({
+									type: ct.LiveMessageSeparator,
+									id: 'live-message-separator'
+								});
+						}
 
 						this.buffer.push(msg.event);
 						changed = true;
@@ -1581,30 +1837,6 @@ export default class ChatHook extends Module {
 
 		cls.prototype._ffz_was_here = true;
 
-		/*cls.prototype.ffzGetEmotes = function() {
-			const emote_map = this.client && this.client.session && this.client.session.emoteMap;
-			if ( this._ffz_cached_map === emote_map )
-				return this._ffz_cached_emotes;
-
-			this._ffz_cached_map = emote_map;
-			const emotes = this._ffz_cached_emotes = {};
-
-			if ( emote_map )
-				for(const emote of Object.values(emote_map))
-					if ( emote ) {
-						const token = emote.token;
-						if ( Array.isArray(REGEX_EMOTES[token]) ) {
-							for(const tok of REGEX_EMOTES[token] )
-								emotes[tok] = emote.id;
-
-						} else
-							emotes[token] = emote.id;
-					}
-
-			return emotes;
-		}*/
-
-
 		cls.prototype._ffzInstall = function() {
 			if ( this._ffz_installed )
 				return;
@@ -1612,9 +1844,11 @@ export default class ChatHook extends Module {
 			this._ffz_installed = true;
 
 			const inst = this,
-				old_send = this.sendMessage;
+				old_send = this.sendMessage,
+				addMessage = (...args) => inst.addMessage(...args),
+				sendMessage = (msg, extra) => inst.sendMessage(msg, extra);
 
-			inst.sendMessage = function(msg) {
+			inst.sendMessage = function(msg, extra) {
 				msg = msg.replace(/\s+/g, ' ');
 
 				if ( msg.startsWith('/ffz') ) {
@@ -1628,7 +1862,10 @@ export default class ChatHook extends Module {
 
 				const event = new FFZEvent({
 					message: msg,
-					channel: inst.props.channelLogin
+					extra,
+					channel: inst.props.channelLogin,
+					addMessage,
+					sendMessage
 				});
 
 				t.emit('chat:pre-send-message', event);
@@ -1636,7 +1873,7 @@ export default class ChatHook extends Module {
 				if ( event.defaultPrevented )
 					return;
 
-				return old_send.call(this, event.message);
+				return old_send.call(this, event.message, event.extra);
 			}
 		}
 
@@ -1667,7 +1904,7 @@ export default class ChatHook extends Module {
 						}
 				}
 
-				const old_chat = this.onChatMessageEvent;
+				/*const old_chat = this.onChatMessageEvent;
 				this.onChatMessageEvent = function(e) {
 					/*if ( e && e.sentByCurrentUser ) {
 						try {
@@ -1679,7 +1916,7 @@ export default class ChatHook extends Module {
 						} catch(err) {
 							t.log.capture(err, {extra: e});
 						}
-					}*/
+					}* /
 
 					return old_chat.call(i, e);
 				}
@@ -1697,15 +1934,18 @@ export default class ChatHook extends Module {
 						} catch(err) {
 							t.log.capture(err, {extra: e});
 						}
-					}*/
+					}* /
 
 					return old_action.call(i, e);
-				}
+				}*/
 
 
 				const old_sub = this.onSubscriptionEvent;
 				this.onSubscriptionEvent = function(e) {
 					try {
+						if ( t.chat.context.get('chat.filtering.blocked-types').has('Subscription') )
+							return;
+
 						if ( t.chat.context.get('chat.subs.show') < 3 )
 							return;
 
@@ -1740,6 +1980,9 @@ export default class ChatHook extends Module {
 				const old_resub = this.onResubscriptionEvent;
 				this.onResubscriptionEvent = function(e) {
 					try {
+						if ( t.chat.context.get('chat.filtering.blocked-types').has('Resubscription') )
+							return;
+
 						if ( t.chat.context.get('chat.subs.show') < 2 && ! e.body )
 							return;
 
@@ -1766,6 +2009,9 @@ export default class ChatHook extends Module {
 				const old_subgift = this.onSubscriptionGiftEvent;
 				this.onSubscriptionGiftEvent = function(e) {
 					try {
+						if ( t.chat.context.get('chat.filtering.blocked-types').has('SubGift') )
+							return;
+
 						const key = `${e.channel}:${e.user.userID}`,
 							mystery = mysteries[key];
 
@@ -1797,6 +2043,7 @@ export default class ChatHook extends Module {
 							login: e.recipientLogin,
 							displayName: e.recipientName
 						};
+						out.sub_months = e.giftMonths;
 						out.sub_plan = e.methods;
 						out.sub_total = e.senderCount;
 
@@ -1812,6 +2059,9 @@ export default class ChatHook extends Module {
 				const old_anonsubgift = this.onAnonSubscriptionGiftEvent;
 				this.onAnonSubscriptionGiftEvent = function(e) {
 					try {
+						if ( t.chat.context.get('chat.filtering.blocked-types').has('AnonSubGift') )
+							return;
+
 						const key = `${e.channel}:ANON`,
 							mystery = mysteries[key];
 
@@ -1844,6 +2094,7 @@ export default class ChatHook extends Module {
 							login: e.recipientLogin,
 							displayName: e.recipientName
 						};
+						out.sub_months = e.giftMonths;
 						out.sub_plan = e.methods;
 						out.sub_total = e.senderCount;
 
@@ -1859,6 +2110,9 @@ export default class ChatHook extends Module {
 				const old_submystery = this.onSubscriptionMysteryGiftEvent;
 				this.onSubscriptionMysteryGiftEvent = function(e) {
 					try {
+						if ( t.chat.context.get('chat.filtering.blocked-types').has('SubMysteryGift') )
+							return;
+
 						let mystery = null;
 						if ( e.massGiftCount > t.chat.context.get('chat.subs.merge-gifts') ) {
 							const key = `${e.channel}:${e.user.userID}`;
@@ -1889,6 +2143,9 @@ export default class ChatHook extends Module {
 				const old_anonsubmystery = this.onAnonSubscriptionMysteryGiftEvent;
 				this.onAnonSubscriptionMysteryGiftEvent = function(e) {
 					try {
+						if ( t.chat.context.get('chat.filtering.blocked-types').has('AnonSubMysteryGift') )
+							return;
+
 						let mystery = null;
 						if ( e.massGiftCount > t.chat.context.get('chat.subs.merge-gifts') ) {
 							const key = `${e.channel}:ANON`;
@@ -1920,6 +2177,9 @@ export default class ChatHook extends Module {
 				const old_ritual = this.onRitualEvent;
 				this.onRitualEvent = function(e) {
 					try {
+						if ( t.chat.context.get('chat.filtering.blocked-types').has('Ritual') )
+							return;
+
 						const out = i.convertMessage(e);
 						out.ffz_type = 'ritual';
 						out.ritual = e.type;
@@ -1935,6 +2195,9 @@ export default class ChatHook extends Module {
 				const old_points = this.onChannelPointsRewardEvent;
 				this.onChannelPointsRewardEvent = function(e) {
 					try {
+						if ( t.chat.context.get('chat.filtering.blocked-types').has('ChannelPointsReward') )
+							return;
+
 						const reward = e.rewardID && get(e.rewardID, i.props.rewardMap);
 						if ( reward ) {
 							const out = i.convertMessage(e);
@@ -2027,50 +2290,8 @@ export default class ChatHook extends Module {
 
 
 	updateChatLines() {
-		//this.PinnedCheer.forceUpdate();
 		this.chat_line.updateLines();
 	}
-
-
-	// ========================================================================
-	// Pinned Cheers
-	// ========================================================================
-
-	/*fixPinnedCheer(inst) {
-		const el = this.fine.getChildNode(inst),
-			container = el && el.querySelector && el.querySelector('.pinned-cheer__headline'),
-			tc = inst.props.topCheer;
-
-		if ( ! container || ! tc )
-			return;
-
-		container.dataset.roomId = inst.props.channelID;
-		container.dataset.room = inst.props.channelLogin && inst.props.channelLogin.toLowerCase();
-		container.dataset.userId = tc.user.userID;
-		container.dataset.user = tc.user.userLogin && tc.user.userLogin.toLowerCase();
-
-		if ( tc.user.color ) {
-			const user_el = container.querySelector('.chat-author__display-name');
-			if ( user_el )
-				user_el.style.color = this.colors.process(tc.user.color);
-
-			const login_el = container.querySelector('.chat-author__intl-login');
-			if ( login_el )
-				login_el.style.color = this.colors.process(tc.user.color);
-		}
-
-		const bit_el = container.querySelector('.chat-line__message--emote'),
-			cont = bit_el ? bit_el.parentElement.parentElement : container.querySelector('.ffz--pinned-top-emote'),
-			prefix = extractCheerPrefix(tc.messageParts);
-
-		if ( cont && prefix ) {
-			const tokens = this.chat.tokenizeString(`${prefix}${tc.bits}`, tc);
-
-			cont.classList.add('ffz--pinned-top-emote');
-			cont.innerHTML = '';
-			setChildren(cont, this.chat.renderTokens(tokens));
-		}
-	}*/
 
 
 	// ========================================================================
@@ -2276,10 +2497,36 @@ export default class ChatHook extends Module {
 		this.updateRoomBitsConfig(cont, props.bitsConfig);
 
 		if ( props.data ) {
+			if ( Twilight.POPOUT_ROUTES.includes(this.router.current_name) ) {
+				const color = props.data.user?.primaryColorHex;
+				this.resolve('site.channel').updateChannelColor(color);
+
+				this.settings.updateContext({
+					channel: props.channelLogin,
+					channelID: props.channelID,
+					channelColor: color
+				});
+			}
+
 			this.chat.badges.updateTwitchBadges(props.data.badges);
 			this.updateRoomBadges(cont, props.data.user && props.data.user.broadcastBadges);
 			this.updateRoomRules(cont, props.chatRules);
 		}
+	}
+
+
+	containerUnmounted(cont) {
+		if ( Twilight.POPOUT_ROUTES.includes(this.router.current_name) ) {
+			this.resolve('site.channel').updateChannelColor();
+
+			this.settings.updateContext({
+				channel: null,
+				channelID: null,
+				channelColor: null
+			});
+		}
+
+		this.removeRoom(cont);
 	}
 
 
@@ -2295,6 +2542,17 @@ export default class ChatHook extends Module {
 
 		if ( props.bitsConfig !== cont.props.bitsConfig )
 			this.updateRoomBitsConfig(cont, props.bitsConfig);
+
+		if ( props.data && Twilight.POPOUT_ROUTES.includes(this.router.current_name) ) {
+			const color = props.data.user?.primaryColorHex;
+			this.resolve('site.channel').updateChannelColor(color);
+
+			this.settings.updateContext({
+				channel: props.channelLogin,
+				channelID: props.channelID,
+				channelColor: color
+			});
+		}
 
 		// Twitch, React, and Apollo are the trifecta of terror so we
 		// can't compare the badgeSets property in any reasonable way.
@@ -2419,40 +2677,4 @@ export function formatBitsConfig(config) {
 		}
 
 	return out;
-}
-
-
-/*export function findEmotes(msg, emotes) {
-	const out = {};
-	let idx = 0;
-
-	for(const part of msg.split(' ')) {
-		const len = split_chars(part).length;
-
-		if ( has(emotes, part) ) {
-			const em = emotes[part],
-				matches = out[em] = out[em] || [];
-
-			matches.push({
-				startIndex: idx,
-				endIndex: idx + len - 1
-			});
-		}
-
-		idx += len + 1;
-	}
-
-	return out;
-}*/
-
-
-function extractCheerPrefix(parts) {
-	for(const part of parts) {
-		if ( part.type !== 3 || ! part.content.cheerAmount )
-			continue;
-
-		return part.content.alt;
-	}
-
-	return null;
 }

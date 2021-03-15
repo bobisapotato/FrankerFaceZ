@@ -1,10 +1,14 @@
 .user-avatar-animated,
 .search-result-card,
+.ffz-avatar,
 .tw-avatar {
 	--border-radius-rounded: 0 !important;
 }
 
-.player-streaminfo__picture img[src] {
+.user-avatar-card__halo,
+.player-streaminfo__picture img[src],
+.channel-info-content .tw-halo,
+.channel-info-content .tw-halo:before {
 	border-radius: 0 !important;
 }
 

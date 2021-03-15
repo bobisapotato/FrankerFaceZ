@@ -6,7 +6,7 @@
 			</h4>
 
 			<button
-				class="tw-button ffz-button--hollow tw-c-text-overlay tw-mg-t-05"
+				class="tw-button tw-button--text tw-c-text-overlay tw-mg-t-05"
 				@click="item.refresh()"
 			>
 				<span class="tw-button__icon tw-button__icon--left">
@@ -16,6 +16,36 @@
 					{{ t('addon.refresh', 'Refresh') }}
 				</span>
 			</button>
+		</div>
+
+		<div v-if="ready" class="tw-mg-b-1 tw-flex tw-align-items-center">
+			<div class="ffz-checkbox tw-relative tw-flex-grow-1">
+				<input
+					id="filter_enabled"
+					v-model="filter_enabled"
+					type="checkbox"
+					class="ffz-checkbox__input"
+				>
+				<label for="filter_enabled" class="ffz-checkbox__label">
+					<span class="tw-mg-l-1">
+						{{ t('addon.filter-enabled', 'Only display enabled add-ons.') }}
+					</span>
+				</label>
+			</div>
+			<select
+				v-model="sort_by"
+				class="tw-border-radius-medium tw-font-size-6 ffz-select tw-pd-l-1 tw-pd-r-3 tw-pd-y-05 tw-mg-x-05"
+			>
+				<option :value="0">
+					{{ t('addon.sort-name', 'Sort By: Name') }}
+				</option>
+				<option :value="1">
+					{{ t('addon.sort-update', 'Sort By: Updated') }}
+				</option>
+				<option :value="2">
+					{{ t('addon.sort-create', 'Sort By: Created') }}
+				</option>
+			</select>
 		</div>
 
 		<div v-if="! ready" class="tw-align-center tw-pd-1">
@@ -28,6 +58,7 @@
 				:key="addon.id"
 				:addon="addon"
 				:item="item"
+				:context="context"
 				@navigate="navigate"
 			/>
 		</div>
@@ -61,7 +92,7 @@
 							<input
 								ref="unlisted"
 								:placeholder="t('addon.unlisted.id', 'add-on id')"
-								class="tw-flex-grow-1 tw-border-radius-medium tw-font-size-6 tw-pd-x-1 tw-pd-y-05 tw-input"
+								class="tw-flex-grow-1 tw-border-radius-medium tw-font-size-6 tw-pd-x-1 tw-pd-y-05 ffz-input"
 								@keydown.enter="addUnlisted"
 							>
 							<button
@@ -90,6 +121,8 @@ export default {
 			ready: this.item.isReady(),
 			reload: this.item.isReloadRequired(),
 			unlisted: [],
+			filter_enabled: false,
+			sort_by: 0,
 			unlisted_open: false
 		}
 	},
@@ -103,6 +136,15 @@ export default {
 			const addons = this.item.getAddons();
 
 			addons.sort((a, b) => {
+				if ( this.sort_by === 1 ) {
+					if ( a.updated > b.updated ) return -1;
+					if ( b.updated > a.updated ) return 1;
+
+				} else if ( this.sort_by === 2 ) {
+					if ( a.created > b.created ) return -1;
+					if ( b.created > a.created ) return 1;
+				}
+
 				if ( a.sort < b.sort ) return -1;
 				if ( b.sort < a.sort ) return 1;
 
@@ -157,7 +199,11 @@ export default {
 
 		shouldShow(addon) {
 			// If an add-on is unlisted, don't list it.
-			if ( addon.unlisted && ! this.item.isAddonEnabled(addon.id) && ! this.unlisted.includes(addon.id) )
+			const enabled = this.item.isAddonEnabled(addon.id);
+			if ( addon.unlisted && ! enabled && ! this.unlisted.includes(addon.id) )
+				return false;
+
+			if ( this.filter_enabled && ! enabled )
 				return false;
 
 			if ( ! this.filter || ! this.filter.length )

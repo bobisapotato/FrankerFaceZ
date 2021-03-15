@@ -7,7 +7,7 @@
 import {NEW_API, SERVER, API_SERVER, IS_WEBKIT, IS_FIREFOX, WEBKIT_CSS as WEBKIT} from 'utilities/constants';
 
 import {createElement, ManagedStyle} from 'utilities/dom';
-import {has} from 'utilities/object';
+import {has, maybe_call} from 'utilities/object';
 import Module from 'utilities/module';
 import { ColorAdjuster } from 'src/utilities/color';
 
@@ -66,10 +66,10 @@ const NO_REPEAT = 'background-repeat:no-repeat;background-position:center;',
 	CSS_MASK_IMAGE = IS_WEBKIT ? 'webkitMaskImage' : 'maskImage',
 
 	CSS_TEMPLATES = {
-		0: data => `background:${data.image} ${data.color};background-size:${data.scale*1.8}rem;${data.svg ? '' : `background-image:${data.image_set};`}${NO_REPEAT}`,
+		0: data => `${data.fore ? `color:${data.fore};` : ''}background:${data.image||''} ${data.color};background-size:${data.scale*1.8}rem;${data.svg ? '' : `background-image:${data.image_set};`}${NO_REPEAT}`,
 		1: data => `${CSS_TEMPLATES[0](data)}border-radius:${data.scale*.2}rem;`,
 		2: data => `${CSS_TEMPLATES[0](data)}border-radius:${data.scale*.9}rem;background-size:${data.scale*1.6}rem;`,
-		3: data => `background:${data.color};border-radius:${data.scale*.9}rem;`,
+		3: data => `${data.fore ? `color:${data.fore};` : ''}background:${data.color};border-radius:${data.scale*.9}rem;`,
 		4: data => `${CSS_TEMPLATES[3](data)}height:${data.scale}rem;min-width:${data.scale}rem;`,
 		5: data => `background:${data.image};background-size:${data.scale*1.8}rem;${data.svg ? `` : `background-image:${data.image_set};`}${NO_REPEAT}`,
 		6: data => `background:linear-gradient(${data.color},${data.color});${WEBKIT}mask-image:${data.image};${WEBKIT}mask-size:${data.scale*1.8}rem ${data.scale*1.8}rem;${data.svg ? `` : `${WEBKIT}mask-image:${data.image_set};`}`
@@ -91,14 +91,15 @@ export function generateOverrideCSS(data, style) {
 }
 
 
-export function generateBadgeCSS(badge, version, data, style, is_dark, badge_version = 2, color_fixer, scale = 1) {
+export function generateBadgeCSS(badge, version, data, style, is_dark, badge_version = 2, color_fixer, fg_fixer, scale = 1, clickable = false) {
 	let color = data.color || 'transparent',
-		base_image = data.image || `${BASE_IMAGE}${badge_version}/${badge}${data.svg ? '.svg' : `/${version}/`}`,
+		fore = data.fore || is_dark ? '#fff' : '#000',
+		base_image = data.image || (data.addon ? null : `${BASE_IMAGE}${badge_version}/${badge}${data.svg ? '.svg' : `/${version}/`}`),
 		trans = false,
 		invert = false,
 		svg, image, image_set;
 
-	if ( style > 4 ) {
+	if ( base_image && style > 4 ) {
 		const td = data.trans || {};
 		color = td.color || color;
 
@@ -106,7 +107,6 @@ export function generateBadgeCSS(badge, version, data, style, is_dark, badge_ver
 			trans = true;
 			if ( td.image !== true )
 				base_image = td.image;
-
 		}
 
 		if ( has(td, 'invert') )
@@ -123,7 +123,7 @@ export function generateBadgeCSS(badge, version, data, style, is_dark, badge_ver
 	if ( color === 'transparent' )
 		style = 0;
 
-	if ( style !== 3 && style !== 4 ) {
+	if ( base_image && style !== 3 && style !== 4 ) {
 		svg = base_image.endsWith('.svg');
 		if ( data.urls )
 			image = `url("${data.urls[scale]}")`;
@@ -147,14 +147,26 @@ export function generateBadgeCSS(badge, version, data, style, is_dark, badge_ver
 	if ( color_fixer && color && color !== 'transparent' )
 		color = color_fixer.process(color) || color;
 
-	// TODO: Fix the click_url name once we actually support badge clicking.
-	return `${data.__click_url ? 'cursor:pointer;' : ''}${invert ? 'filter:invert(100%);' : ''}${CSS_TEMPLATES[style]({
+	if ( fg_fixer && fore && fore !== 'transparent' && color !== 'transparent' ) {
+		fg_fixer.base = color;
+		fore = fg_fixer.process(fore) || fore;
+	}
+
+	if ( ! base_image ) {
+		if ( style > 4 )
+			style = 1;
+		else if ( style > 3 )
+			style = 2;
+	}
+
+	return `${clickable && (data.click_handler || data.click_url || data.click_action) ? 'cursor:pointer;' : ''}${invert ? 'filter:invert(100%);' : ''}${CSS_TEMPLATES[style]({
 		scale: 1,
 		color,
+		fore,
 		image,
 		image_set,
 		svg
-	})}`;
+	})}${data.css || ''}`;
 }
 
 
@@ -164,11 +176,17 @@ export default class Badges extends Module {
 
 		this.inject('i18n');
 		this.inject('settings');
-		this.inject('socket');
 		this.inject('tooltips');
 		this.inject('experiments');
 
 		this.style = new ManagedStyle('badges');
+
+		// Special data structure for supporters to greatly reduce
+		// memory usage and speed things up for people who only have
+		// a supporter badge.
+		this.supporter_id = null;
+		this.supporters = new Set;
+
 		this.badges = {};
 		this.twitch_badges = {};
 
@@ -196,6 +214,16 @@ export default class Badges extends Module {
 			}
 		});
 
+		this.settings.add('chat.badges.clickable', {
+			default: true,
+			ui: {
+				path: 'Chat > Badges >> Behavior',
+				title: 'Allow clicking badges.',
+				description: 'Certain badges, such as Prime Gaming, act as links when this is enabled.',
+				component: 'setting-check-box'
+			}
+		});
+
 		this.settings.add('chat.badges.fix-colors', {
 			default: true,
 			ui: {
@@ -213,7 +241,7 @@ export default class Badges extends Module {
 				path: 'Chat > Badges >> tabs ~> Visibility',
 				title: 'Visibility',
 				component: 'badge-visibility',
-				data: () => this.getSettingsBadges(true)
+				getBadges: cb => this.getSettingsBadges(true, cb)
 			}
 		});
 
@@ -243,15 +271,27 @@ export default class Badges extends Module {
 				]
 			}
 		});
+
+		this.handleClick = this.handleClick.bind(this);
 	}
 
-	getSettingsBadges(include_addons) {
+	getSettingsBadges(include_addons, callback) {
 		const twitch = [],
 			owl = [],
 			tcon = [],
 			game = [],
 			ffz = [],
 			addon = [];
+
+		const twitch_keys = Object.keys(this.twitch_badges);
+		if ( ! twitch_keys.length && callback ) {
+			const td = this.resolve('site.twitch_data');
+			if ( td )
+				td.getBadges().then(data => {
+					this.updateTwitchBadges(data);
+					callback();
+				});
+		}
 
 		for(const key in this.twitch_badges)
 			if ( has(this.twitch_badges, key) ) {
@@ -303,6 +343,9 @@ export default class Badges extends Module {
 					const badge = this.badges[key],
 						image = badge.urls ? (badge.urls[2] || badge.urls[1]) : badge.image;
 
+					if ( badge.no_visibility )
+						continue;
+
 					(badge.addon ? addon : ffz).push({
 						id: key,
 						provider: 'ffz',
@@ -332,6 +375,7 @@ export default class Badges extends Module {
 		this.parent.context.on('changed:chat.badges.version', this.rebuildAllCSS, this);
 		this.parent.context.on('changed:chat.badges.media-queries', this.rebuildAllCSS, this);
 		this.parent.context.on('changed:chat.badges.fix-colors', this.rebuildColoredBadges, this);
+		this.parent.context.on('changed:chat.badges.clickable', this.rebuildAllCSS, this);
 
 		this.rebuildAllCSS();
 		this.loadGlobalBadges();
@@ -339,10 +383,13 @@ export default class Badges extends Module {
 		this.tooltips.types.badge = (target, tip) => {
 			tip.add_class = 'ffz__tooltip--badges';
 
-			const show_previews = this.parent.context.get('tooltip.badge-images'),
-				container = target.parentElement.parentElement,
-				room_id = container.dataset.roomId,
-				room_login = container.dataset.room,
+			const show_previews = this.parent.context.get('tooltip.badge-images');
+			let container = target.parentElement.parentElement;
+			if ( ! container.dataset.roomId )
+				container = target.closest('[data-room-id]');
+
+			const room_id = container?.dataset?.roomId,
+				room_login = container?.dataset?.room,
 				data = JSON.parse(target.dataset.badgeData),
 				out = [];
 
@@ -358,12 +405,21 @@ export default class Badges extends Module {
 						continue;
 
 					let title = bd.title || global_badge.title;
+					const tier = bd.tier || global_badge.tier;
+
 					if ( d.data ) {
 						if ( d.badge === 'subscriber' ) {
-							title = this.i18n.t('badges.subscriber.months', '{title} ({count,number} Month{count,en_plural})', {
-								title,
-								count: d.data
-							});
+							if ( tier > 0 )
+								title = this.i18n.t('badges.subscriber.tier-months', '{title}\n(Tier {tier}, {months,number} Month{months,en_plural})', {
+									title,
+									tier,
+									months: d.data
+								});
+							else
+								title = this.i18n.t('badges.subscriber.months', '{title}\n({count,number} Month{count,en_plural})', {
+									title,
+									count: d.data
+								});
 						} else if ( d.badge === 'founder' ) {
 							title = this.i18n.t('badges.founder.months', '{title}\n(Subscribed for {count,number} Month{count,en_plural})', {
 								title,
@@ -387,7 +443,7 @@ export default class Badges extends Module {
 
 				} else if ( p === 'ffz' ) {
 					out.push(<div class="ffz-badge-tip">
-						{show_previews && <div
+						{show_previews && d.image && <div
 							class="preview-image ffz-badge"
 							style={{
 								backgroundColor: d.color,
@@ -415,8 +471,75 @@ export default class Badges extends Module {
 	}
 
 
-	render(msg, createElement) { // eslint-disable-line class-methods-use-this
-		const hidden_badges = this.parent.context.get('chat.badges.hidden') || {},
+	handleClick(event) {
+		if ( ! this.parent.context.get('chat.badges.clickable') )
+			return;
+
+		const target = event.target;
+		let container = target.parentElement.parentElement;
+		if ( ! container.dataset.roomId )
+			container = target.closest('[data-room-id]');
+
+		const ds = container?.dataset,
+			room_id = ds?.roomId,
+			room_login = ds?.room,
+			user_id = ds?.userId,
+			user_login = ds?.user,
+			data = JSON.parse(target.dataset.badgeData);
+
+		if ( data == null )
+			return;
+
+		let url = null;
+
+		for(const d of data) {
+			const p = d.provider;
+			if ( p === 'twitch' ) {
+				const bd = this.getTwitchBadge(d.badge, d.version, room_id, room_login),
+					global_badge = this.getTwitchBadge(d.badge, d.version, null, null, true) || {};
+				if ( ! bd )
+					continue;
+
+				if ( bd.click_url )
+					url = bd.click_url;
+				else if ( global_badge.click_url )
+					url = global_badge.click_url;
+				else if ( (bd.click_action === 'sub' || global_badge.click_action === 'sub') && room_login )
+					url = `https://www.twitch.tv/subs/${room_login}`;
+				else
+					continue;
+
+				break;
+
+			} else if ( p === 'ffz' ) {
+				const badge = this.badges[target.dataset.badge];
+				if ( badge?.click_handler ) {
+					url = badge.click_handler(user_id, user_login, room_id, room_login, data, event);
+					break;
+				}
+
+				if ( badge?.click_url ) {
+					url = badge.click_url;
+					break;
+				}
+			}
+		}
+
+		if ( url ) {
+			const link = createElement('a', {
+				target: '_blank',
+				rel: 'noopener noreferrer',
+				href: url
+			});
+			link.click();
+		}
+
+		event.preventDefault();
+	}
+
+
+	render(msg, createElement, skip_hide = false) { // eslint-disable-line class-methods-use-this
+		const hidden_badges = skip_hide ? {} : (this.parent.context.get('chat.badges.hidden') || {}),
 			badge_style = this.parent.context.get('chat.badges.style'),
 			custom_mod = this.parent.context.get('chat.badges.custom-mod'),
 			is_mask = badge_style > 5,
@@ -493,8 +616,15 @@ export default class Badges extends Module {
 				};
 			}
 
+		const handled_ids = new Set;
+
 		for(const badge of badges)
 			if ( badge && badge.id != null ) {
+				if ( handled_ids.has(badge.id) )
+					continue;
+
+				handled_ids.add(badge.id);
+
 				const full_badge = this.badges[badge.id] || {},
 					is_hidden = hidden_badges[badge.id];
 
@@ -513,8 +643,14 @@ export default class Badges extends Module {
 						provider: 'ffz',
 						image: bu[4] || bu[2] || bu[1],
 						color: badge.color || full_badge.color,
-						title: badge.title || full_badge.title
+						title: badge.title || full_badge.title,
 					};
+
+				// Hacky nonsense.
+				if ( ! full_badge.addon ) {
+					bd.image = `//cdn.frankerfacez.com/badge/${badge.id}/4/rounded`;
+					bd.color = null;
+				}
 
 				let style;
 
@@ -523,9 +659,10 @@ export default class Badges extends Module {
 
 					const replaces = has(badge, 'replaces') ? badge.replaces : full_badge.replaces,
 						replaces_type = badge.replaces_type || full_badge.replaces_type;
-					if ( replaces && (!replaces_type || replaces_type === old_badge.id) )
+					if ( replaces && (!replaces_type || replaces_type === old_badge.id) ) {
 						old_badge.replaced = badge.id;
-					else
+						old_badge.content = badge.content || full_badge.content || old_badge.content;
+					} else
 						continue;
 
 					style = old_badge.props.style;
@@ -543,7 +680,12 @@ export default class Badges extends Module {
 						style
 					};
 
-					slotted[slot] = {id: badge.id, props, badges: [bd]}
+					slotted[slot] = {
+						id: badge.id,
+						props,
+						badges: [bd],
+						content: badge.content || full_badge.content
+					}
 				}
 
 				if (no_invert) {
@@ -579,15 +721,21 @@ export default class Badges extends Module {
 				const data = slotted[slot],
 					props = data.props;
 
-				props.className = `ffz-tooltip ffz-badge${data.full_size ? ' ffz-full-size' : ''}${data.no_invert ? ' ffz-no-invert' : ''}`;
+				let content = maybe_call(data.content, this, data, msg, createElement);
+				if ( content && ! Array.isArray(content) )
+					content = [content];
+
+				props.className = `ffz-tooltip ffz-badge${content ? ' tw-pd-x-05' : ''}${data.full_size ? ' ffz-full-size' : ''}${data.no_invert ? ' ffz-no-invert' : ''}`;
 				props.key = `${props['data-provider']}-${props['data-badge']}`;
 				props['data-tooltip-type'] = 'badge';
 				props['data-badge-data'] = JSON.stringify(data.badges);
 
+				props.onClick = this.handleClick;
+
 				if ( data.replaced )
 					props['data-replaced'] = data.replaced;
 
-				out.push(createElement('span', props));
+				out.push(createElement('span', props, content || undefined));
 			}
 
 		return out;
@@ -596,13 +744,16 @@ export default class Badges extends Module {
 
 	rebuildColor() {
 		if ( this.parent.context.get('chat.badges.fix-colors') ) {
+			this.fg_fixer = new ColorAdjuster('#fff', 1, 4.5);
 			this.color_fixer = new ColorAdjuster(
 				this.parent.context.get('theme.is-dark') ? '#181818' : '#FFFFFF',
 				1,
 				2.5
 			);
-		} else
+		} else {
+			this.fg_fixer = null;
 			this.color_fixer = null;
+		}
 	}
 
 
@@ -637,8 +788,13 @@ export default class Badges extends Module {
 			global_user = this.parent.getUser(user_id, user_login, true),
 			room_user = room && room.getUser(user_id, user_login, true);
 
-		return (global_user ? global_user.badges._cache : []).concat(
+		const out = (global_user ? global_user.badges._cache : []).concat(
 			room_user ? room_user.badges._cache : []);
+
+		if ( this.supporter_id && this.supporters.has(`${user_id}`) )
+			out.push({id: this.supporter_id});
+
+		return out;
 	}
 
 
@@ -647,11 +803,11 @@ export default class Badges extends Module {
 
 		if ( this.experiments.getAssignment('api_load') && tries < 1 )
 			try {
-				fetch(`${NEW_API}/v1/badges`).catch(() => {});
+				fetch(`${NEW_API}/v1/badges/ids`).catch(() => {});
 			} catch(err) { /* do nothing */ }
 
 		try {
-			response = await fetch(`${API_SERVER}/v1/badges`);
+			response = await fetch(`${API_SERVER}/v1/badges/ids`);
 		} catch(err) {
 			tries++;
 			if ( tries < 10 )
@@ -685,13 +841,21 @@ export default class Badges extends Module {
 				if ( has(data.users, badge_id) ) {
 					const badge = this.badges[badge_id];
 					let c = 0;
-					for(const user_login of data.users[badge_id]) {
-						const user = this.parent.getUser(undefined, user_login);
-						if ( user.addBadge('ffz-global', badge_id) ) {
-							c++;
-							users++;
+
+					if ( badge?.name === 'supporter' ) {
+						this.supporter_id = badge_id;
+						for(const user_id of data.users[badge_id])
+							this.supporters.add(`${user_id}`);
+
+						c = this.supporters.size;
+					} else
+						for(const user_id of data.users[badge_id]) {
+							const user = this.parent.getUser(user_id, undefined);
+							if ( user.addBadge('ffz-global', badge_id) ) {
+								c++;
+								users++;
+							}
 						}
-					}
 
 					if ( c > 0 )
 						this.log.info(`Added "${badge ? badge.name : `#${badge_id}`}" to ${c} users.`);
@@ -705,16 +869,18 @@ export default class Badges extends Module {
 	loadBadgeData(badge_id, data, generate_css = true) {
 		this.badges[badge_id] = data;
 
-		if ( data.addon === undefined )
-			data.addon =/^addon/.test(badge_id);
+		if ( data ) {
+			if ( data.addon === undefined )
+				data.addon =/^addon/.test(badge_id);
 
-		if ( data.replaces && ! data.replaces_type ) {
-			data.replaces_type = data.replaces;
-			data.replaces = true;
+			if ( data.replaces && ! data.replaces_type ) {
+				data.replaces_type = data.replaces;
+				data.replaces = true;
+			}
+
+			if ( ! data.addon && (data.name === 'developer' || data.name === 'supporter') )
+				data.click_url = 'https://www.frankerfacez.com/donate';
 		}
-
-		if ( data.name === 'developer' || data.name === 'supporter' )
-			data.click_url = 'https://www.frankerfacez.com/donate';
 
 		if ( generate_css )
 			this.buildBadgeCSS();
@@ -724,6 +890,7 @@ export default class Badges extends Module {
 	buildBadgeCSS() {
 		const style = this.parent.context.get('chat.badges.style'),
 			is_dark = this.parent.context.get('theme.is-dark'),
+			can_click = this.parent.context.get('chat.badges.clickable'),
 			use_media = IS_FIREFOX && this.parent.context.get('chat.badges.media-queries');
 
 		const out = [];
@@ -735,11 +902,11 @@ export default class Badges extends Module {
 				out.push(`.ffz-badge[data-replaced="${key}"]{${generateOverrideCSS(data, style, is_dark)}}`);
 
 				if ( use_media ) {
-					out.push(`@media (max-resolution: 99dpi) {${selector}{${generateBadgeCSS(key, 0, data, style, is_dark, 0, this.color_fixer, 1)}}}`);
-					out.push(`@media (min-resolution: 100dpi) and (max-resolution:199dpi) {${selector}{${generateBadgeCSS(key, 0, data, style, is_dark, 0, this.color_fixer, 2)}}}`);
-					out.push(`@media (min-resolution: 200dpi) {${selector}{${generateBadgeCSS(key, 0, data, style, is_dark, 0, this.color_fixer, 4)}}}`);
+					out.push(`@media (max-resolution: 99dpi) {${selector}{${generateBadgeCSS(key, 0, data, style, is_dark, 0, this.color_fixer, this.fg_fixer, 1, can_click)}}}`);
+					out.push(`@media (min-resolution: 100dpi) and (max-resolution:199dpi) {${selector}{${generateBadgeCSS(key, 0, data, style, is_dark, 0, this.color_fixer, this.fg_fixer, 2, can_click)}}}`);
+					out.push(`@media (min-resolution: 200dpi) {${selector}{${generateBadgeCSS(key, 0, data, style, is_dark, 0, this.color_fixer, this.fg_fixer, 4, can_click)}}}`);
 				} else
-					out.push(`${selector}{${generateBadgeCSS(key, 0, data, style, is_dark, 0, this.color_fixer)}}`);
+					out.push(`${selector}{${generateBadgeCSS(key, 0, data, style, is_dark, 0, this.color_fixer, this.fg_fixer, undefined, can_click)}}`);
 			}
 
 		this.style.set('ext-badges', out.join('\n'));
@@ -791,6 +958,8 @@ export default class Badges extends Module {
 							__cat: getBadgeCategory(sid)
 						};
 
+					fixBadgeData(data);
+
 					this.twitch_badge_count++;
 					bs[data.version] = data;
 				}
@@ -800,32 +969,42 @@ export default class Badges extends Module {
 		}
 
 		this.buildTwitchBadgeCSS();
+		this.buildTwitchCSSBadgeCSS();
 	}
 
 
 	buildTwitchCSSBadgeCSS() {
 		const style = this.parent.context.get('chat.badges.style'),
 			is_dark = this.parent.context.get('theme.is-dark'),
+			can_click = this.parent.context.get('chat.badges.clickable'),
 			use_media = IS_FIREFOX && this.parent.context.get('chat.badges.media-queries'),
 
 			badge_version = this.parent.context.get('chat.badges.version'),
-			versioned = CSS_BADGES[badge_version] || {};
+			versioned = CSS_BADGES[badge_version] || {},
+			twitch_data = this.twitch_badges || {};
 
 		const out = [];
 		for(const key in versioned)
 			if ( has(versioned, key) ) {
-				const data = versioned[key];
+				const data = versioned[key],
+					twitch = twitch_data[key];
 				for(const version in data)
 					if ( has(data, version) ) {
 						const d = data[version],
+							td = twitch?.[version],
 							selector = `.ffz-badge[data-badge="${key}"][data-version="${version}"]`;
 
+						if ( td && td.click_url )
+							d.click_url = td.click_url;
+						if ( td && td.click_action )
+							d.click_action = td.click_action;
+
 						if ( use_media ) {
-							out.push(`@media (max-resolution: 99dpi) {${selector}{${generateBadgeCSS(key, version, d, style, is_dark, badge_version, this.color_fixer, 1)}}}`);
-							out.push(`@media (min-resolution: 100dpi) and (max-resolution:199dpi) {${selector}{${generateBadgeCSS(key, version, d, style, is_dark, badge_version, this.color_fixer, 2)}}}`);
-							out.push(`@media (min-resolution: 200dpi) {${selector}{${generateBadgeCSS(key, version, d, style, is_dark, badge_version, this.color_fixer, 4)}}}`);
+							out.push(`@media (max-resolution: 99dpi) {${selector}{${generateBadgeCSS(key, version, d, style, is_dark, badge_version, this.color_fixer, this.fg_fixer, 1, can_click)}}}`);
+							out.push(`@media (min-resolution: 100dpi) and (max-resolution:199dpi) {${selector}{${generateBadgeCSS(key, version, d, style, is_dark, badge_version, this.color_fixer, this.fg_fixer, 2, can_click)}}}`);
+							out.push(`@media (min-resolution: 200dpi) {${selector}{${generateBadgeCSS(key, version, d, style, is_dark, badge_version, this.color_fixer, this.fg_fixer, 4, can_click)}}}`);
 						} else
-							out.push(`${selector}{${generateBadgeCSS(key, version, d, style, is_dark, badge_version, this.color_fixer)}}`);
+							out.push(`${selector}{${generateBadgeCSS(key, version, d, style, is_dark, badge_version, this.color_fixer, this.fg_fixer, undefined, can_click)}}`);
 					}
 			}
 
@@ -839,6 +1018,7 @@ export default class Badges extends Module {
 
 		const badge_version = this.parent.context.get('chat.badges.version'),
 			use_media = IS_FIREFOX && this.parent.context.get('chat.badges.media-queries'),
+			can_click = this.parent.context.get('chat.badges.clickable'),
 			versioned = CSS_BADGES[badge_version] || {};
 
 		const out = [];
@@ -854,6 +1034,7 @@ export default class Badges extends Module {
 							selector = `.ffz-badge[data-badge="${key}"][data-version="${version}"]`;
 
 						out.push(`${selector} {
+			${can_click && (data.click_action || data.click_url) ? 'cursor:pointer;' : ''}
 			background-color: transparent;
 			filter: none;
 			${WEBKIT}mask-image: none;
@@ -885,7 +1066,7 @@ export default class Badges extends Module {
 }
 
 
-function getBadgeCategory(key) {
+export function getBadgeCategory(key) {
 	if ( key.startsWith('overwatch-league') )
 		return 'm-owl';
 	else if ( key.startsWith('twitchcon') )
@@ -894,4 +1075,37 @@ function getBadgeCategory(key) {
 		return 'm-game';
 
 	return 'm-twitch';
+}
+
+export function fixBadgeData(badge) {
+	if ( ! badge )
+		return badge;
+
+	// Click Behavior
+	if ( ! badge.clickAction && badge.onClickAction )
+		badge.clickAction = badge.onClickAction;
+
+	if ( badge.clickAction === 'VISIT_URL' && badge.clickURL )
+		badge.click_url = badge.clickURL;
+
+	if ( badge.clickAction === 'TURBO' )
+		badge.click_url = 'https://www.twitch.tv/products/turbo?ref=chat_badge';
+
+	if ( badge.clickAction === 'SUBSCRIBE' && badge.channelName )
+		badge.click_url = `https://www.twitch.tv/subs/${badge.channelName}`;
+	else if ( badge.clickAction )
+		badge.click_action = 'sub';
+
+	// Subscriber Tier
+	if ( badge.setID === 'subscriber' ) {
+		const id = parseInt(badge.version, 10);
+		if ( ! isNaN(id) && isFinite(id) ) {
+			badge.tier = (id - (id % 1000)) / 1000;
+			if ( badge.tier < 0 )
+				badge.tier = 0;
+		} else
+			badge.tier = 0;
+	}
+
+	return badge;
 }

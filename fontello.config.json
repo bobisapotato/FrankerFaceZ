@@ -703,6 +703,76 @@
       "search": [
         "eq-off-mini"
       ]
+    },
+    {
+      "uid": "a40ae65481bf77a9ad8bea62df45b93a",
+      "css": "viewers",
+      "code": 59456,
+      "src": "custom_icons",
+      "selected": true,
+      "svg": {
+        "path": "M250 350A250 250 0 1 1 559.6 592.8 100 100 0 0 0 650 650H700A150 150 0 0 1 850 800V900H750V800A50 50 0 0 0 700 750H650A199.5 199.5 0 0 1 500 682.3 199.5 199.5 0 0 1 350 750H300A50 50 0 0 0 250 800V900H150V800A150 150 0 0 1 300 650H350A100 100 0 0 0 440.4 592.8 250.1 250.1 0 0 1 250 350ZM500 500A150 150 0 1 1 500 200 150 150 0 0 1 500 500Z",
+        "width": 1000
+      },
+      "search": [
+        "viewers-saved"
+      ]
+    },
+    {
+      "uid": "6605ee6441bf499ffa3c63d3c7409471",
+      "css": "move",
+      "code": 61511,
+      "src": "fontawesome"
+    },
+    {
+      "uid": "31951fbb9820ed0690f675b3d495c8da",
+      "css": "chat-empty",
+      "code": 61670,
+      "src": "fontawesome"
+    },
+    {
+      "uid": "dcedf50ab1ede3283d7a6c70e2fe32f3",
+      "css": "chat",
+      "code": 59457,
+      "src": "fontawesome"
+    },
+    {
+      "uid": "0d08dbb1dd648a43bdea81b7e6c9e036",
+      "css": "location",
+      "code": 59458,
+      "src": "fontawesome"
+    },
+    {
+      "uid": "0ddd3e8201ccc7d41f7b7c9d27eca6c1",
+      "css": "link",
+      "code": 59459,
+      "src": "fontawesome"
+    },
+    {
+      "uid": "8489d61496923b1159b01d8a0a7b2df0",
+      "css": "volume-off",
+      "code": 59461,
+      "src": "elusive"
+    },
+    {
+      "uid": "c6be5a58ee4e63a5ec399c2b0d15cf2c",
+      "css": "reply",
+      "code": 61714,
+      "src": "fontawesome"
+    },
+    {
+      "uid": "d4413cf47ed064b48fcd5bf727826be1",
+      "css": "threads",
+      "code": 59460,
+      "src": "custom_icons",
+      "selected": true,
+      "svg": {
+        "path": "M550 400H650V500H550V400ZM450 400H350V500H450V400ZM500 900L350 750H250A100 100 0 0 1 150 650V250A100 100 0 0 1 250 150H750A100 100 0 0 1 850 250V650A100 100 0 0 1 750 750H650L500 900ZM391.4 650L500 758.6 608.6 650H750V250H250V650H391.4Z",
+        "width": 1000
+      },
+      "search": [
+        "threads"
+      ]
     }
   ]
 }

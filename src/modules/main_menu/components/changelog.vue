@@ -11,22 +11,22 @@
 
 		<div v-if=" ! addons" class="tw-mg-b-1 tw-flex tw-align-items-center">
 			<div class="tw-flex-grow-1" />
-			<div class="tw-checkbox tw-relative tw-tooltip-wrapper">
+			<div class="ffz-checkbox tw-relative tw-tooltip__container">
 				<input
 					id="nonversioned"
 					ref="nonversioned"
 					v-model="nonversioned"
 					type="checkbox"
-					class="tw-checkbox__input"
+					class="ffz-checkbox__input"
 				>
 
-				<label for="nonversioned" class="tw-checkbox__label">
+				<label for="nonversioned" class="ffz-checkbox__label">
 					<span class="tw-mg-l-1">
 						{{ t('home.changelog.show-nonversioned', 'Include non-versioned commits.') }}
 					</span>
 				</label>
 
-				<div class="tw-tooltip tw-balloon--md tw-tooltip--wrap tw-tooltip--down tw-tooltip--align-right">
+				<div class="tw-tooltip ffz-balloon--md tw-tooltip--wrap tw-tooltip--down tw-tooltip--align-right">
 					{{ t('home.changelog.about-nonversioned', 'Non-versioned commits are commits to the FrankerFaceZ repository not associated with a release build. They typically represent maintenance or contributions from the community that will be included in a subsequent release.') }}
 				</div>
 			</div>
@@ -53,11 +53,12 @@
 									:href="commit.author.html_url"
 									target="_blank"
 									rel="noopener noreferrer"
-									class="tw-inline-flex tw-align-items-center tw-link tw-link--inherit tw-mg-x-05"
+									class="tw-inline-flex tw-align-items-center tw-link tw-link--inherit tw-mg-x-05 ffz-tooltip"
+									data-tooltip-type="link"
 								>
 									<figure
 										v-if="commit.author.avatar_url"
-										class="tw-avatar tw-avatar--size-20 tw-mg-r-05"
+										class="ffz-avatar ffz-avatar--size-20 tw-mg-r-05"
 									>
 										<img
 											:src="commit.author.avatar_url"
@@ -76,7 +77,7 @@
 						v-if="commit.hash"
 						class="tw-font-size-8 tw-c-text-alt-2"
 					>
-						@<a :href="commit.link" target="_blank" rel="noopener noreferrer" class="tw-link tw-link--inherit">{{ commit.hash }}</a>
+						@<a :href="commit.link" target="_blank" rel="noopener noreferrer" class="tw-link tw-link--inherit ffz-tooltip" data-tooltip-type="link">{{ commit.hash }}</a>
 					</div>
 					<time
 						v-if="commit.date"
@@ -90,7 +91,7 @@
 
 		<div class="tw-align-center tw-pd-1">
 			<div v-if="error">
-				{{ t('home.changelog.error', 'An error occured loading changes from GitHub.') }}
+				{{ t('home.changelog.error', 'An error occurred loading changes from GitHub.') }}
 			</div>
 			<h1 v-else-if="loading" class="tw-mg-5 ffz-i-zreknarf loading" />
 			<div v-else-if="! more">
@@ -185,9 +186,9 @@ export default {
 				is_today = date.toDateString() === today.toDateString();
 
 			if ( is_today )
-				return date.toLocaleTimeString();
+				return this.tTime(date);
 
-			return date.toLocaleDateString();
+			return this.tDate(date);
 		},
 
 		async fetchMore() {

@@ -8,7 +8,7 @@
 			<select
 				:id="'page$' + id"
 				v-model="value.data.route"
-				class="tw-flex-grow-1 tw-mg-l-1 tw-border-radius-medium tw-font-size-6 tw-pd-x-1 tw-pd-y-05 tw-select"
+				class="tw-flex-grow-1 tw-mg-l-1 tw-border-radius-medium tw-font-size-6 tw-pd-x-1 tw-pd-y-05 ffz-select"
 			>
 				<option
 					v-for="(_, key) in routes"
@@ -45,7 +45,7 @@
 				<input
 					:id="'page$' + id + '$part-' + part.key"
 					v-model="value.data.values[part.key]"
-					class="tw-mg-l-1 tw-flex-grow-1 tw-border-radius-medium tw-font-size-6 tw-pd-x-1 tw-pd-y-05 tw-input"
+					class="tw-mg-l-1 tw-flex-grow-1 tw-border-radius-medium tw-font-size-6 tw-pd-x-1 tw-pd-y-05 ffz-input"
 				>
 			</div>
 		</div>
@@ -86,7 +86,7 @@ export default {
 			}
 
 			try {
-				return decodeURI(new URL(this.route.url(parts), location));
+				return decodeURI(new URL(this.route.url(parts), this.route.domain ? `https://${this.route.domain}` : location));
 			} catch(err) {
 				return '(unable to render url)';
 			}

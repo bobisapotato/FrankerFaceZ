@@ -24,6 +24,27 @@ import Actions from './actions';
 
 export const SEPARATORS = '[\\s`~<>!-#%-\\x2A,-/:;\\x3F@\\x5B-\\x5D_\\x7B}\\u00A1\\u00A7\\u00AB\\u00B6\\u00B7\\u00BB\\u00BF\\u037E\\u0387\\u055A-\\u055F\\u0589\\u058A\\u05BE\\u05C0\\u05C3\\u05C6\\u05F3\\u05F4\\u0609\\u060A\\u060C\\u060D\\u061B\\u061E\\u061F\\u066A-\\u066D\\u06D4\\u0700-\\u070D\\u07F7-\\u07F9\\u0830-\\u083E\\u085E\\u0964\\u0965\\u0970\\u0AF0\\u0DF4\\u0E4F\\u0E5A\\u0E5B\\u0F04-\\u0F12\\u0F14\\u0F3A-\\u0F3D\\u0F85\\u0FD0-\\u0FD4\\u0FD9\\u0FDA\\u104A-\\u104F\\u10FB\\u1360-\\u1368\\u1400\\u166D\\u166E\\u169B\\u169C\\u16EB-\\u16ED\\u1735\\u1736\\u17D4-\\u17D6\\u17D8-\\u17DA\\u1800-\\u180A\\u1944\\u1945\\u1A1E\\u1A1F\\u1AA0-\\u1AA6\\u1AA8-\\u1AAD\\u1B5A-\\u1B60\\u1BFC-\\u1BFF\\u1C3B-\\u1C3F\\u1C7E\\u1C7F\\u1CC0-\\u1CC7\\u1CD3\\u2010-\\u2027\\u2030-\\u2043\\u2045-\\u2051\\u2053-\\u205E\\u207D\\u207E\\u208D\\u208E\\u2329\\u232A\\u2768-\\u2775\\u27C5\\u27C6\\u27E6-\\u27EF\\u2983-\\u2998\\u29D8-\\u29DB\\u29FC\\u29FD\\u2CF9-\\u2CFC\\u2CFE\\u2CFF\\u2D70\\u2E00-\\u2E2E\\u2E30-\\u2E3B\\u3001-\\u3003\\u3008-\\u3011\\u3014-\\u301F\\u3030\\u303D\\u30A0\\u30FB\\uA4FE\\uA4FF\\uA60D-\\uA60F\\uA673\\uA67E\\uA6F2-\\uA6F7\\uA874-\\uA877\\uA8CE\\uA8CF\\uA8F8-\\uA8FA\\uA92E\\uA92F\\uA95F\\uA9C1-\\uA9CD\\uA9DE\\uA9DF\\uAA5C-\\uAA5F\\uAADE\\uAADF\\uAAF0\\uAAF1\\uABEB\\uFD3E\\uFD3F\\uFE10-\\uFE19\\uFE30-\\uFE52\\uFE54-\\uFE61\\uFE63\\uFE68\\uFE6A\\uFE6B\\uFF01-\\uFF03\\uFF05-\\uFF0A\\uFF0C-\\uFF0F\\uFF1A\\uFF1B\\uFF1F\\uFF20\\uFF3B-\\uFF3D\\uFF3F\\uFF5B\\uFF5D\\uFF5F-\\uFF65]';
 
+function addSeparators(str) {
+	return `(^|.*?${SEPARATORS})(?:${str})(?=$|${SEPARATORS})`
+}
+
+const TERM_FLAGS = ['g', 'gi'];
+
+function formatTerms(data) {
+	const out = [];
+
+	for(let i=0; i < data.length; i++) {
+		const list = data[i];
+		if ( list[0].length )
+			list[1].push(addSeparators(list[0].join('|')));
+
+		out.push(list[1].length ? new RegExp(list[1].join('|'), TERM_FLAGS[i] || 'gi') : null);
+	}
+
+	return out;
+}
+
+const ERROR_IMAGE = 'https://static-cdn.jtvnw.net/emoticons/v1/58765/2.0';
 const EMOTE_CHARS = /[ .,!]/;
 
 export default class Chat extends Module {
@@ -35,7 +56,6 @@ export default class Chat extends Module {
 		this.inject('settings');
 		this.inject('i18n');
 		this.inject('tooltips');
-		this.inject('socket');
 		this.inject('experiments');
 
 		this.inject(Badges);
@@ -49,6 +69,7 @@ export default class Chat extends Module {
 		// Bind for JSX stuff
 		this.clickToReveal = this.clickToReveal.bind(this);
 		this.handleMentionClick = this.handleMentionClick.bind(this);
+		this.handleReplyClick = this.handleReplyClick.bind(this);
 
 		this.style = new ManagedStyle;
 
@@ -71,8 +92,51 @@ export default class Chat extends Module {
 		// Settings
 		// ========================================================================
 
+		this.settings.add('debug.link-resolver.source', {
+			default: null,
+			ui: {
+				path: 'Debugging > Data Sources >> Links',
+				title: 'Link Resolver',
+				component: 'setting-select-box',
+				force_seen: true,
+				data: [
+					{value: null, title: 'Automatic'},
+					{value: 'dev', title: 'localhost'},
+					{value: 'test', title: 'API Test'},
+					{value: 'prod', title: 'API Production' },
+					{value: 'socket', title: 'Socket Cluster (Deprecated)'}
+				]
+			},
+
+			changed: () => this.clearLinkCache()
+		});
+
+		this.settings.addUI('debug.link-resolver.test', {
+			path: 'Debugging > Data Sources >> Links',
+			component: 'link-tester',
+			getChat: () => this,
+			force_seen: true
+		});
+
+		this.settings.add('chat.timestamp-size', {
+			default: null,
+			ui: {
+				path: 'Chat > Appearance >> General',
+				title: 'Timestamp Font Size',
+				description: 'How large should timestamps be, in pixels. Defaults to Font Size if not set.',
+				component: 'setting-text-box',
+				process(val) {
+					val = parseInt(val, 10);
+					if ( isNaN(val) || ! isFinite(val) || val <= 0 )
+						return null;
+
+					return val;
+				}
+			}
+		});
+
 		this.settings.add('chat.font-size', {
-			default: 12,
+			default: 13,
 			ui: {
 				path: 'Chat > Appearance >> General',
 				title: 'Font Size',
@@ -81,7 +145,7 @@ export default class Chat extends Module {
 				process(val) {
 					val = parseInt(val, 10);
 					if ( isNaN(val) || ! isFinite(val) || val <= 0 )
-						return 12;
+						return 13;
 
 					return val;
 				}
@@ -183,7 +247,7 @@ export default class Chat extends Module {
 		this.settings.add('chat.filtering.click-to-reveal', {
 			default: false,
 			ui: {
-				path: 'Chat > Filtering >> Behavior',
+				path: 'Chat > Filtering > General @{"sort":-1} >> Behavior',
 				title: 'Click to reveal deleted terms.',
 				component: 'setting-check-box'
 			}
@@ -239,7 +303,7 @@ export default class Chat extends Module {
 		this.settings.add('chat.automod.delete-messages', {
 			default: true,
 			ui: {
-				path: 'Chat > Filtering >> AutoMod Filters @{"description": "Extra configuration for Twitch\'s native `Chat Filters`."}',
+				path: 'Chat > Filtering > General >> AutoMod Filters @{"description": "Extra configuration for Twitch\'s native `Chat Filters`."}',
 				title: 'Mark messages as deleted if they contain filtered phrases.',
 				component: 'setting-check-box'
 			}
@@ -248,7 +312,7 @@ export default class Chat extends Module {
 		this.settings.add('chat.automod.remove-messages', {
 			default: true,
 			ui: {
-				path: 'Chat > Filtering >> AutoMod Filters',
+				path: 'Chat > Filtering > General >> AutoMod Filters',
 				title: 'Remove messages entirely if they contain filtered phrases.',
 				component: 'setting-check-box'
 			}
@@ -257,7 +321,7 @@ export default class Chat extends Module {
 		this.settings.add('chat.automod.run-as-mod', {
 			default: false,
 			ui: {
-				path: 'Chat > Filtering >> AutoMod Filters',
+				path: 'Chat > Filtering > General >> AutoMod Filters',
 				title: 'Use Chat Filters as a moderator.',
 				description: 'By default, Twitch\'s Chat Filters feature does not function for moderators. This overrides that behavior.',
 				component: 'setting-check-box'
@@ -267,7 +331,7 @@ export default class Chat extends Module {
 		this.settings.add('chat.filtering.process-own', {
 			default: false,
 			ui: {
-				path: 'Chat > Filtering >> Behavior',
+				path: 'Chat > Filtering > General >> Behavior',
 				title: 'Filter your own messages.',
 				component: 'setting-check-box'
 			}
@@ -328,7 +392,7 @@ export default class Chat extends Module {
 			type: 'array_merge',
 			always_inherit: true,
 			ui: {
-				path: 'Chat > Filtering >> Highlight Users',
+				path: 'Chat > Filtering > Highlight >> Users',
 				component: 'basic-terms',
 				colored: true,
 				words: false
@@ -387,7 +451,7 @@ export default class Chat extends Module {
 			type: 'array_merge',
 			always_inherit: true,
 			ui: {
-				path: 'Chat > Filtering >> Blocked Users',
+				path: 'Chat > Filtering > Block >> Users',
 				component: 'basic-terms',
 				removable: true,
 				words: false
@@ -436,7 +500,7 @@ export default class Chat extends Module {
 			type: 'array_merge',
 			always_inherit: true,
 			ui: {
-				path: 'Chat > Filtering >> Highlight Badges',
+				path: 'Chat > Filtering > Highlight >> Badges',
 				component: 'badge-highlighting',
 				colored: true,
 				data: () => this.badges.getSettingsBadges()
@@ -458,7 +522,8 @@ export default class Chat extends Module {
 					const c = item.c || null,
 						v = item.v;
 
-					colors.set(v, c);
+					if ( ! colors.has(v) )
+						colors.set(v, c);
 				}
 
 				return colors;
@@ -471,7 +536,7 @@ export default class Chat extends Module {
 			type: 'array_merge',
 			always_inherit: true,
 			ui: {
-				path: 'Chat > Filtering >> Blocked Badges',
+				path: 'Chat > Filtering > Block >> Badges @{"description": "**Note:** This section is for filtering messages out of chat from users with specific badges. If you wish to hide a badge, go to [Chat > Badges >> Visibility](~chat.badges.tabs.visibility)."}',
 				component: 'badge-highlighting',
 				removable: true,
 				data: () => this.badges.getSettingsBadges()
@@ -504,35 +569,39 @@ export default class Chat extends Module {
 			type: 'array_merge',
 			always_inherit: true,
 			ui: {
-				path: 'Chat > Filtering >> Highlight Terms',
+				path: 'Chat > Filtering > Highlight >> Terms @{"description": "Please see [Chat > Filtering > Syntax Help](~) for details on how to use terms."}',
 				component: 'basic-terms',
-				colored: true
+				colored: true,
+				highlight: true
 			}
 		});
 
 		this.settings.add('chat.filtering.highlight-basic-terms--color-regex', {
-			requires: ['chat.filtering.highlight-basic-terms'],
+			requires: ['chat.filtering.highlight-tokens', 'chat.filtering.highlight-basic-terms'],
 			equals: 'requirements',
 			process(ctx) {
+				const can_highlight = ctx.get('chat.filtering.highlight-tokens');
 				const val = ctx.get('chat.filtering.highlight-basic-terms');
 				if ( ! val || ! val.length )
 					return null;
 
 				const colors = new Map;
+				let has_highlight = false,
+					has_non = false;
 
 				for(const item of val) {
 					const c = item.c || null,
-						t = item.t;
+						highlight = can_highlight && (has(item, 'h') ? item.h : true),
+						sensitive = item.s,
+						t = item.t,
+						word = has(item, 'w') ? item.w : t !== 'raw';
 
-					let v = item.v, word = true;
+					let v = item.v;
 
 					if ( t === 'glob' )
 						v = glob_to_regex(v);
 
-					else if ( t === 'raw' )
-						word = false;
-
-					else if ( t !== 'regex' )
+					else if ( t !== 'regex' && t !== 'raw' )
 						v = escape_regex(v);
 
 					if ( ! v || ! v.length )
@@ -544,23 +613,55 @@ export default class Chat extends Module {
 						continue;
 					}
 
-					if ( colors.has(c) )
-						colors.get(c)[word ? 0 : 1].push(v);
-					else {
-						const vals = [[],[]];
-						colors.set(c, vals);
-						vals[word ? 0 : 1].push(v);
-					}
+					if ( highlight )
+						has_highlight = true;
+					else
+						has_non = true;
+
+					let data = colors.get(c);
+					if ( ! data )
+						colors.set(c, data = [
+							[ // highlight
+								[ // sensitive
+									[], [] // word
+								],
+								[
+									[], []
+								]
+							],
+							[
+								[
+									[], []
+								],
+								[
+									[], []
+								]
+							]
+						]);
+
+					data[highlight ? 0 : 1][sensitive ? 0 : 1][word ? 0 : 1].push(v);
 				}
+
+				if ( ! has_highlight && ! has_non )
+					return null;
+
+				const out = {
+					hl: has_highlight ? new Map : null,
+					non: has_non ? new Map : null
+				};
 
 				for(const [key, list] of colors) {
-					if ( list[0].length )
-						list[1].push(`(^|.*?${SEPARATORS})(?:${list[0].join('|')})(?=$|${SEPARATORS})`);
+					const highlights = formatTerms(list[0]),
+						non_highlights = formatTerms(list[1]);
 
-					colors.set(key, new RegExp(list[1].join('|'), 'gi'));
+					if ( highlights[0] || highlights[1] )
+						out.hl.set(key, highlights);
+
+					if ( non_highlights[0] || non_highlights[1] )
+						out.non.set(key, non_highlights);
 				}
 
-				return colors;
+				return out;
 			}
 		});
 
@@ -570,7 +671,7 @@ export default class Chat extends Module {
 			type: 'array_merge',
 			always_inherit: true,
 			ui: {
-				path: 'Chat > Filtering >> Blocked Terms',
+				path: 'Chat > Filtering > Block >> Terms @{"description": "Please see [Chat > Filtering > Syntax Help](~) for details on how to use terms."}',
 				component: 'basic-terms',
 				removable: true
 			}
@@ -591,16 +692,14 @@ export default class Chat extends Module {
 				];
 
 				for(const item of val) {
-					const t = item.t;
-					let v = item.v, word = true;
+					const t = item.t,
+						word = has(item, 'w') ? item.w : t !== 'raw';
+					let v = item.v;
 
 					if ( t === 'glob' )
 						v = glob_to_regex(v);
 
-					else if ( t === 'raw' )
-						word = false;
-
-					else if ( t !== 'regex' )
+					else if ( t !== 'regex' && t !== 'raw' )
 						v = escape_regex(v);
 
 					if ( ! v || ! v.length )
@@ -628,10 +727,29 @@ export default class Chat extends Module {
 			}
 		});
 
+		this.settings.add('chat.filtering.color-mentions', {
+			default: false,
+			ui: {
+				component: 'setting-check-box',
+				path: 'Chat > Filtering > General >> Appearance',
+				title: 'Display mentions in chat with username colors.',
+				description: '**Note:** Not compatible with color overrides as mentions do not include user IDs.'
+			}
+		});
+
+		this.settings.add('chat.filtering.bold-mentions', {
+			default: true,
+			ui: {
+				component: 'setting-check-box',
+				path: 'Chat > Filtering > General >> Appearance',
+				title: 'Display mentions in chat with a bold font.'
+			}
+		});
+
 		this.settings.add('chat.filtering.mention-color', {
 			default: '',
 			ui: {
-				path: 'Chat > Filtering >> Appearance',
+				path: 'Chat > Filtering > General >> Appearance',
 				title: 'Custom Highlight Color',
 				component: 'setting-color-box',
 				description: 'If this is set, highlighted messages with no default color set will use this color rather than red.'
@@ -641,7 +759,7 @@ export default class Chat extends Module {
 		this.settings.add('chat.filtering.highlight-mentions', {
 			default: false,
 			ui: {
-				path: 'Chat > Filtering >> Appearance',
+				path: 'Chat > Filtering > General >> Appearance',
 				title: 'Highlight messages that mention you.',
 				component: 'setting-check-box'
 			}
@@ -650,7 +768,7 @@ export default class Chat extends Module {
 		this.settings.add('chat.filtering.highlight-tokens', {
 			default: false,
 			ui: {
-				path: 'Chat > Filtering >> Appearance',
+				path: 'Chat > Filtering > General >> Appearance',
 				title: 'Highlight matched words in chat.',
 				component: 'setting-check-box'
 			}
@@ -844,6 +962,21 @@ export default class Chat extends Module {
 			for(const room of this.iterateRooms())
 				room.buildBitsCSS();
 		});
+
+		this.context.on('changed:chat.filtering.color-mentions', async val => {
+			if ( val )
+				await this.createColorCache();
+			else
+				this.color_cache = null;
+
+			this.emit(':update-lines');
+		});
+	}
+
+
+	async createColorCache() {
+		const LRUCache = await require(/* webpackChunkName: 'utils' */ 'mnemonist/lru-cache');
+		this.color_cache = new LRUCache(150);
 	}
 
 
@@ -857,6 +990,11 @@ export default class Chat extends Module {
 
 
 	onEnable() {
+		this.socket = this.resolve('socket');
+
+		if ( this.context.get('chat.filtering.color-mentions') )
+			this.createColorCache().then(() => this.emit(':update-lines'));
+
 		for(const key in TOKENIZERS)
 			if ( has(TOKENIZERS, key) )
 				this.addTokenizer(TOKENIZERS[key]);
@@ -1009,6 +1147,19 @@ export default class Chat extends Module {
 	}
 
 
+	handleReplyClick(event) {
+		const target = event.target,
+			fine = this.resolve('site.fine');
+
+		if ( ! target || ! fine )
+			return;
+
+		const chat = fine.searchParent(target, n => n.props && n.props.reply && n.setOPCardTray);
+		if ( chat )
+			chat.setOPCardTray(chat.props.reply);
+	}
+
+
 	handleMentionClick(event) {
 		if ( ! this.context.get('chat.filtering.clickable-mentions') )
 			return;
@@ -1023,7 +1174,7 @@ export default class Chat extends Module {
 		if ( ! fine )
 			return;
 
-		const chat = fine.searchParent(event.target, n => n.props && n.props.onUsernameClick);
+		const chat = fine.searchParent(target, n => n.props && n.props.onUsernameClick);
 		if ( ! chat )
 			return;
 
@@ -1110,6 +1261,25 @@ export default class Chat extends Module {
 	}
 
 
+	tokenizeReply(reply) {
+		if ( ! reply )
+			return null;
+
+		return [
+			{
+				type: 'reply',
+				text: reply.parentDisplayName,
+				color: this.color_cache ? this.color_cache.get(reply.parentUserLogin) : null,
+				recipient: reply.parentUserLogin
+			},
+			{
+				type: 'text',
+				text: ' '
+			}
+		];
+	}
+
+
 	standardizeMessage(msg) { // eslint-disable-line class-methods-use-this
 		if ( ! msg )
 			return msg;
@@ -1133,6 +1303,9 @@ export default class Chat extends Module {
 		user.login = user.login || user.userLogin || null;
 		user.displayName = user.displayName || user.userDisplayName || user.login || ext.displayName;
 		user.isIntl = user.login && user.displayName && user.displayName.trim().toLowerCase() !== user.login;
+
+		if ( this.color_cache && user.color )
+			this.color_cache.set(user.login, user.color);
 
 		// Standardize Message Content
 		if ( ! msg.message && msg.messageParts )
@@ -1179,6 +1352,10 @@ export default class Chat extends Module {
 			const emotes = {},
 				chars = split_chars(msg.message);
 
+			let offset = 0;
+			if ( msg.message && msg.messageBody && msg.message !== msg.messageBody )
+				offset = chars.length - split_chars(msg.messageBody).length;
+
 			for(const key in msg.emotes)
 				if ( has(msg.emotes, key) ) {
 					const raw_emote = msg.emotes[key];
@@ -1186,7 +1363,7 @@ export default class Chat extends Module {
 						return msg.ffz_emotes = msg.emotes;
 
 					const em = emotes[raw_emote.id] = emotes[raw_emote.id] || [];
-					let idx = raw_emote.startIndex + 1;
+					let idx = raw_emote.startIndex + 1 + offset;
 					while(idx < chars.length) {
 						if ( EMOTE_CHARS.test(chars[idx]) )
 							break;
@@ -1195,7 +1372,7 @@ export default class Chat extends Module {
 					}
 
 					em.push({
-						startIndex: raw_emote.startIndex,
+						startIndex: raw_emote.startIndex + offset,
 						endIndex: idx - 1
 					});
 				}
@@ -1284,9 +1461,15 @@ export default class Chat extends Module {
 				ret = `${content.alt}${content.cheerAmount}`;
 
 			} else if ( content.images ) {
-				const url = (content.images.themed ? content.images.dark : content.images.sources),
-					match = url && /\/emoticons\/v1\/(\d+)\/[\d.]+$/.exec(url['1x']),
+				const url = (content.images.themed ? content.images.dark : content.images.sources);
+				let id = content.emoteID;
+				if ( ! id ) {
+					const match = url && (
+						/\/emoticons\/v1\/(\d+)\/[\d.]+$/.exec(url['1x']) ||
+						/\/emoticons\/v2\/(\d+)\//.exec(url['1x'])
+					);
 					id = match && match[1];
+				}
 
 				ret = content.alt;
 
@@ -1345,7 +1528,7 @@ export default class Chat extends Module {
 			const tt = tokenizer.tooltip;
 			const tk = this.tooltips.types[type] = tt.bind(this);
 
-			for(const i of ['interactive', 'delayShow', 'delayHide'])
+			for(const i of ['interactive', 'delayShow', 'delayHide', 'onShow', 'onHide'])
 				tk[i] = typeof tt[i] === 'function' ? tt[i].bind(this) : tt[i];
 		}
 
@@ -1410,8 +1593,6 @@ export default class Chat extends Module {
 			return [];
 
 		let tokens = [{type: 'text', text: msg.message}];
-		if ( ! tokens[0].text )
-			return tokens;
 
 		for(const tokenizer of this.__tokenizers)
 			tokens = tokenizer.process.call(this, tokens, msg, user);
@@ -1420,7 +1601,7 @@ export default class Chat extends Module {
 	}
 
 
-	renderTokens(tokens, e) {
+	renderTokens(tokens, e, reply) {
 		if ( ! e )
 			e = createElement;
 
@@ -1438,6 +1619,10 @@ export default class Chat extends Module {
 
 			let res;
 
+			// If we have a reply, skip the initial mention.
+			if ( reply && i === 0 && type === 'mention' && token.recipient && token.recipient === reply.parentUserLogin )
+				continue;
+
 			if ( type === 'text' )
 				res = e('span', {
 					className: 'text-fragment',
@@ -1445,7 +1630,7 @@ export default class Chat extends Module {
 				}, token.text);
 
 			else if ( tk )
-				res = tk.render.call(this, token, e);
+				res = tk.render.call(this, token, e, reply);
 
 			else
 				res = e('em', {
@@ -1466,11 +1651,38 @@ export default class Chat extends Module {
 	// Twitch Crap
 	// ====
 
-	get_link_info(url, no_promises) {
+	clearLinkCache(url) {
+		if ( url ) {
+			const info = this._link_info[url];
+			if ( ! info[0] ) {
+				for(const pair of info[2])
+					pair[1]();
+			}
+
+			this._link_info[url] = null;
+			this.emit(':update-link-resolver', url);
+			return;
+		}
+
+		const old = this._link_info;
+		this._link_info = {};
+
+		for(const info of Object.values(old)) {
+			if ( ! info[0] ) {
+				for(const pair of info[2])
+					pair[1]();
+			}
+		}
+
+		this.emit(':update-link-resolver');
+	}
+
+
+	get_link_info(url, no_promises, refresh = false) {
 		let info = this._link_info[url];
 		const expires = info && info[1];
 
-		if ( expires && Date.now() > expires )
+		if ( (info && info[0] && refresh) || (expires && Date.now() > expires) )
 			info = this._link_info[url] = null;
 
 		if ( info && info[0] )
@@ -1486,6 +1698,8 @@ export default class Chat extends Module {
 			info = this._link_info[url] = [false, null, [[resolve, reject]]];
 
 			const handle = (success, data) => {
+				data = this.fixLinkInfo(data);
+
 				const callbacks = ! info[0] && info[2];
 				info[0] = true;
 				info[1] = Date.now() + 120000;
@@ -1496,10 +1710,65 @@ export default class Chat extends Module {
 						cbs[success ? 0 : 1](data);
 			}
 
+			let provider = this.settings.get('debug.link-resolver.source');
+			if ( provider == null )
+				provider = this.experiments.getAssignment('api_links') ? 'test' : 'socket';
 
-			timeout(this.socket.call('get_link', url), 15000)
-				.then(data => handle(true, data))
-				.catch(err => handle(false, err));
+			if ( provider === 'socket' && ! this.socket )
+				provider = 'test';
+
+			if ( provider === 'socket' ) {
+				timeout(this.socket.call('get_link', url), 15000)
+					.then(data => handle(true, data))
+					.catch(err => handle(false, err));
+			} else {
+				const host = provider === 'dev' ? 'https://localhost:8002/' :
+					provider === 'test' ? 'https://api-test.frankerfacez.com/v2/link' :
+						'https://api.frankerfacez.com/v2/link';
+
+				timeout(fetch(`${host}?url=${encodeURIComponent(url)}`).then(r => r.json()), 15000)
+					.then(data => handle(true, data))
+					.catch(err => handle(false, err));
+			}
 		});
+	}
+
+	fixLinkInfo(data) {
+		if ( data.error && data.message )
+			data.error = data.message;
+
+		if ( data.error )
+			data = {
+				v: 5,
+				title: this.i18n.t('card.error', 'An error occurred.'),
+				description: data.error,
+				short: {
+					type: 'header',
+					image: {type: 'image', url: ERROR_IMAGE},
+					title: {type: 'i18n', key: 'card.error', phrase: 'An error occurred.'},
+					subtitle: data.error
+				}
+			}
+
+		if ( data.v < 5 && ! data.short && ! data.full && (data.title || data.desc_1 || data.desc_2) ) {
+			const image = data.preview || data.image;
+
+			data = {
+				v: 5,
+				short: {
+					type: 'header',
+					image: image ? {
+						type: 'image',
+						url: image,
+						sfw: data.image_safe ?? false,
+					} : null,
+					title: data.title,
+					subtitle: data.desc_1,
+					extra: data.desc_2
+				}
+			}
+		}
+
+		return data;
 	}
 }

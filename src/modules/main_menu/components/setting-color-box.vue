@@ -16,6 +16,7 @@
 				:open-up="openUp"
 				:nullable="true"
 				:value="color"
+				class="tw-mg-05"
 				@input="onInput"
 			/>
 
@@ -37,7 +38,7 @@
 				</span>
 			</button>
 
-			<button v-if="has_value" class="tw-mg-l-05 tw-button tw-button--text tw-tooltip-wrapper" @click="clear">
+			<button v-if="has_value" class="tw-mg-l-05 tw-button tw-button--text tw-tooltip__container" @click="clear">
 				<span class="tw-button__text ffz-i-cancel" />
 				<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-right">
 					{{ t('setting.reset', 'Reset to Default') }}

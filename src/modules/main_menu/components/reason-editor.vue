@@ -10,7 +10,7 @@
 					v-model="edit_data.text"
 					:placeholder="adding ? t('setting.reasons.add-placeholder', 'Add a new reason') : edit_data.text"
 					type="text"
-					class="tw-block tw-full-width tw-border-radius-medium tw-font-size-6 tw-full-width tw-input tw-pd-x-1 tw-pd-y-05"
+					class="tw-block tw-full-width tw-border-radius-medium tw-font-size-6 tw-full-width ffz-input tw-pd-x-1 tw-pd-y-05"
 					autocapitalize="off"
 					autocorrect="off"
 				>
@@ -23,13 +23,13 @@
 				</button>
 			</div>
 			<div v-else-if="editing" class="tw-flex-shrink-0">
-				<button class="tw-button tw-button--text tw-tooltip-wrapper" @click="save">
+				<button class="tw-button tw-button--text tw-tooltip__container" @click="save">
 					<span class="tw-button__text ffz-i-floppy" />
 					<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-right">
 						{{ t('setting.save', 'Save') }}
 					</div>
 				</button>
-				<button class="tw-button tw-button--text tw-tooltip-wrapper" @click="cancel">
+				<button class="tw-button tw-button--text tw-tooltip__container" @click="cancel">
 					<span class="tw-button__text ffz-i-cancel" />
 					<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-right">
 						{{ t('setting.cancel', 'Cancel') }}
@@ -37,13 +37,13 @@
 				</button>
 			</div>
 			<div v-else-if="deleting" class="tw-flex-shrink-0">
-				<button class="tw-button tw-button--text tw-tooltip-wrapper" @click="$emit('remove', reason)">
+				<button class="tw-button tw-button--text tw-tooltip__container" @click="$emit('remove', reason)">
 					<span class="tw-button__text ffz-i-trash" />
 					<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-right">
 						{{ t('setting.delete', 'Delete') }}
 					</div>
 				</button>
-				<button class="tw-button tw-button--text tw-tooltip-wrapper" @click="deleting = false">
+				<button class="tw-button tw-button--text tw-tooltip__container" @click="deleting = false">
 					<span class="tw-button__text ffz-i-cancel" />
 					<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-right">
 						{{ t('setting.cancel', 'Cancel') }}
@@ -51,13 +51,13 @@
 				</button>
 			</div>
 			<div v-else class="tw-flex-shrink-0">
-				<button class="tw-button tw-button--text tw-tooltip-wrapper" @click="edit">
+				<button class="tw-button tw-button--text tw-tooltip__container" @click="edit">
 					<span class="tw-button__text ffz-i-cog" />
 					<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-right">
 						{{ t('setting.edit', 'Edit') }}
 					</div>
 				</button>
-				<button class="tw-button tw-button--text tw-tooltip-wrapper" @click="deleting = true">
+				<button class="tw-button tw-button--text tw-tooltip__container" @click="deleting = true">
 					<span class="tw-button__text ffz-i-trash" />
 					<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-right">
 						{{ t('setting.delete', 'Delete') }}

@@ -4,12 +4,22 @@
 // Rich Content Providers
 // ============================================================================
 
-const CLIP_URL = /^(?:https?:\/\/)?clips\.twitch\.tv\/(\w+)(?:\/)?(\w+)?(?:\/edit)?/;
-const NEW_CLIP_URL = /^(?:https?:\/\/)?(?:www\.)?twitch\.tv\/\w+\/clip\/(\w+)/;
+//const CLIP_URL = /^(?:https?:\/\/)?clips\.twitch\.tv\/(\w+)(?:\/)?(\w+)?(?:\/edit)?/;
+//const NEW_CLIP_URL = /^(?:https?:\/\/)?(?:www\.)?twitch\.tv\/\w+\/clip\/(\w+)/;
+const CLIP_URL = /^(?:https?:\/\/)?clips\.twitch\.tv\/([a-z0-9-_=]+)(?:\/)?(\w+)?(?:\/edit)?/i;
+const NEW_CLIP_URL = /^(?:https?:\/\/)?(?:(?:www|m)\.)?twitch\.tv\/\w+\/clip\/([a-z0-9-_=]+)/i;
 const VIDEO_URL = /^(?:https?:\/\/)?(?:www\.)?twitch\.tv\/(?:\w+\/v|videos)\/(\w+)/;
+const USER_URL = /^(?:https?:\/\/)?(?:www\.)?twitch\.tv\/([^/]+)$/;
+
+const BAD_USERS = [
+	'directory', '_deck', 'p', 'downloads', 'jobs', 'turbo', 'settings', 'friends',
+	'subscriptions', 'inventory', 'wallet'
+];
 
 import GET_CLIP from './clip_info.gql';
 import GET_VIDEO from './video_info.gql';
+
+import {truncate} from 'utilities/object';
 
 
 // ============================================================================
@@ -34,31 +44,139 @@ export const Links = {
 			url: token.url,
 			timeout: 0,
 
-			getData: async () => {
+			getData: async (refresh = false) => {
 				let data;
 				try {
-					data = await this.get_link_info(token.url);
+					data = await this.get_link_info(token.url, false, refresh);
 				} catch(err) {
 					return {
 						url: token.url,
-						title: this.i18n.t('card.error', 'An error occurred.'),
-						desc_1: String(err)
+						error: String(err)
 					}
 				}
 
 				if ( ! data )
 					return {
-						url: token.url,
-						title: this.i18n.t('card.error', 'An error occurred.'),
-						desc_1: this.i18n.t('card.empty', 'No data was returned.')
+						url: token.url
 					}
 
 				return {
+					...data,
+					allow_media: this.context.get('tooltip.link-images'),
+					allow_unsafe: this.context.get('tooltip.link-nsfw-images')
+				};
+			}
+		}
+	}
+}
+
+
+// ============================================================================
+// Users
+// ============================================================================
+
+export const Users = {
+	type: 'user',
+	hide_token: false,
+
+	test(token) {
+		if ( token.type !== 'link' || (! this.context.get('chat.rich.all-links') && ! token.force_rich) )
+			return false;
+
+		return USER_URL.test(token.url);
+	},
+
+	process(token) {
+		const match = USER_URL.exec(token.url),
+			twitch_data = this.resolve('site.twitch_data');
+
+		if ( ! twitch_data || ! match || BAD_USERS.includes(match[1]) )
+			return;
+
+		return {
+			url: token.url,
+
+			getData: async () => {
+				const user = await twitch_data.getUser(null, match[1]);
+				if ( ! user || ! user.id )
+					return null;
+
+				const game = user.broadcastSettings?.game?.displayName,
+					stream_id = user.stream?.id;
+
+				let subtitle
+				if ( stream_id && game )
+					subtitle = {
+						type: 'i18n',
+						key: 'cards.user.streaming', phrase: 'streaming {game}', content: {
+							game: {type: 'style', weight: 'semibold', content: game}
+						}
+					};
+
+				const extra = truncate(user.description);
+				const title = [user.displayName];
+
+				if ( user.displayName.trim().toLowerCase() !== user.login )
+					title.push({
+						type: 'style', color: 'alt-2',
+						content: [' (', user.login, ')']
+					});
+
+				if ( user.roles?.isPartner )
+					title.push({
+						type: 'style', color: 'link',
+						content: {type: 'icon', name: 'verified'}
+					});
+
+				/*const full = [{
+					type: 'header',
+					image: {type: 'image', url: user.profileImageURL, rounding: -1, aspect: 1},
+					title,
+					subtitle,
+					extra: stream_id ? extra : null
+				}];
+
+				if ( stream_id ) {
+					full.push({type: 'box', 'mg-y': 'small', lines: 1, content: user.broadcastSettings.title});
+					full.push({type: 'conditional', content: {
+						type: 'gallery', items: [{
+							type: 'image', aspect: 16/9, sfw: false, url: user.stream.previewImageURL
+						}]
+					}});
+				} else
+					full.push({type: 'box', 'mg-y': 'small', wrap: 'pre-wrap', lines: 5, content: truncate(user.description, 1000, undefined, undefined, false)})
+
+				full.push({
+					type: 'fieldset',
+					fields: [
+						{
+							name: {type: 'i18n', key: 'embed.twitch.views', phrase: 'Views'},
+							value: {type: 'format', format: 'number', value: user.profileViewCount},
+							inline: true
+						},
+						{
+							name: {type: 'i18n', key: 'embed.twitch.followers', phrase: 'Followers'},
+							value: {type: 'format', format: 'number', value: user.followers?.totalCount},
+							inline: true
+						}
+					]
+				});
+
+				full.push({
+					type: 'header',
+					subtitle: [{type: 'icon', name: 'twitch'}, ' Twitch']
+				});*/
+
+				return {
 					url: token.url,
-					image: this.context.get('tooltip.link-images') ? (data.image_safe || this.context.get('tooltip.link-nsfw-images') ) ? data.preview || data.image : null : null,
-					title: data.title,
-					desc_1: data.desc_1,
-					desc_2: data.desc_2
+					accent: user.primaryColorHex ? `#${user.primaryColorHex}` : null,
+					short: {
+						type: 'header',
+						image: {type: 'image', url: user.profileImageURL, rounding: -1, aspect: 1},
+						title,
+						subtitle,
+						extra
+					}
 				}
 			}
 		}
@@ -72,7 +190,7 @@ export const Links = {
 
 export const Clips = {
 	type: 'clip',
-	hide_token: true,
+	hide_token: false,
 
 	test(token) {
 		if ( token.type !== 'link' )
@@ -105,35 +223,52 @@ export const Clips = {
 					return null;
 
 				const clip = result.data.clip,
-					user = clip.broadcaster.displayName,
 					game = clip.game,
-					game_name = game && game.name,
 					game_display = game && game.displayName;
 
-				let desc_1;
-				if ( game_name === 'creative' )
-					desc_1 = this.i18n.t('clip.desc.1.creative', '{user} being Creative', {
-						user
-					});
+				const user = {
+					type: 'link', url: `https://www.twitch.tv/${clip.broadcaster.login}`,
+					content: {
+						type: 'style', weight: 'semibold', color: 'alt-2',
+						content: clip.broadcaster.displayName
+					}
+				};
 
-				else if ( game )
-					desc_1 = this.i18n.t('clip.desc.1.playing', '{user} playing {game}', {
+				const subtitle = game_display ? {
+					type: 'i18n', key: 'clip.desc.1.playing', phrase: '{user} playing {game}', content: {
 						user,
-						game: game_display
-					});
+						game: {type: 'style', weight: 'semibold', content: game_display}
+					}
+				} : {type: 'i18n', key: 'clip.desc.1', phrase: 'Clip of {user}', content: {user}};
 
-				else
-					desc_1 = this.i18n.t('clip.desc.1', 'Clip of {user}', {user});
+				const curator = clip.curator ? {
+					type: 'link', url: `https://www.twitch.tv/${clip.curator.login}`,
+					content: {
+						type: 'style', color: 'alt-2',
+						content: clip.curator.displayName
+					}
+				} : {type: 'i18n', key: 'clip.unknown', phrase: 'Unknown'};
+
+				const extra = {
+					type: 'i18n', key: 'clip.desc.2',
+					phrase: 'Clipped by {curator} — {views,number} View{views,en_plural}',
+					content: {
+						curator,
+						views: clip.viewCount
+					}
+				};
 
 				return {
 					url: token.url,
-					image: clip.thumbnailURL,
-					title: clip.title,
-					desc_1,
-					desc_2: this.i18n.t('clip.desc.2', 'Clipped by {curator} — {views,number} View{views,en_plural}', {
-						curator: clip.curator ? clip.curator.displayName : this.i18n.t('clip.unknown', 'Unknown'),
-						views: clip.viewCount
-					})
+					accent: '#6441a4',
+
+					short: {
+						type: 'header',
+						image: {type: 'image', url: clip.thumbnailURL, sfw: true, aspect: 16/9},
+						title: clip.title,
+						subtitle,
+						extra
+					}
 				}
 			}
 		}
@@ -143,7 +278,7 @@ export const Clips = {
 
 export const Videos = {
 	type: 'video',
-	hide_token: true,
+	hide_token: false,
 
 	test(token) {
 		return token.type === 'link' && VIDEO_URL.test(token.url)
@@ -169,37 +304,43 @@ export const Videos = {
 					return null;
 
 				const video = result.data.video,
-					user = video.owner.displayName,
 					game = video.game,
-					game_name = game && game.name,
 					game_display = game && game.displayName;
 
-				let desc_1;
-				if ( game_name === 'creative' )
-					desc_1 = this.i18n.t('clip.desc.1.creative', '{user} being Creative', {
-						user
-					});
+				const user = {
+					type: 'link', url: `https://www.twitch.tv/${video.owner.login}`,
+					content: {
+						type: 'style', weight: 'semibold', color: 'alt-2',
+						content: video.owner.displayName
+					}
+				};
 
-				else if ( game )
-					desc_1 = this.i18n.t('clip.desc.1.playing', '{user} playing {game}', {
+				const subtitle = game_display ? {
+					type: 'i18n', key: 'clip.desc.1.playing', phrase: '{user} playing {game}', content: {
 						user,
-						game: game_display
-					});
+						game: {type: 'style', weight: 'semibold', content: game_display}
+					}
+				} : {type: 'i18n', key: 'video.desc.1', phrase: 'Video of {user}', content: {user}};
 
-				else
-					desc_1 = this.i18n.t('video.desc.1', 'Video of {user}', {user});
-
-				return {
-					url: token.url,
-					image: video.previewThumbnailURL,
-					title: video.title,
-					desc_1,
-					desc_2: this.i18n.t('video.desc.2', '{length,duration} — {views,number} Views - {date,datetime}', {
+				const extra = {
+					type: 'i18n', key: 'video.desc.2',
+					phrase: '{length,duration} — {views,number} Views — {date,datetime}', content: {
 						length: video.lengthSeconds,
 						views: video.viewCount,
 						date: video.publishedAt
-					})
-				}
+					}
+				};
+
+				return {
+					url: token.url,
+					short: {
+						type: 'header',
+						image: {type: 'image', url: video.previewThumbnailURL, sfw: true, aspect: 16/9},
+						title: video.title,
+						subtitle,
+						extra
+					}
+				};
 			}
 		}
 	}

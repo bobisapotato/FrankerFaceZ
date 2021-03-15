@@ -5,7 +5,7 @@
 // ============================================================================
 
 import {EventEmitter} from 'utilities/events';
-import {has, get as getter, array_equals, set_equals, map_equals} from 'utilities/object';
+import {has, get as getter, array_equals, set_equals, map_equals, deep_equals} from 'utilities/object';
 
 import * as DEFINITIONS from './types';
 
@@ -119,11 +119,13 @@ export default class SettingsContext extends EventEmitter {
 		const new_profiles = [],
 			order = this.order = [];
 
-		for(const profile of this.manager.__profiles)
-			if ( profile.toggled && profile.matches(this.__context) ) {
-				new_profiles.push(profile);
-				order.push(profile.id);
-			}
+		if ( ! this.manager.disable_profiles ) {
+			for(const profile of this.manager.__profiles)
+				if ( profile.toggled && profile.matches(this.__context) ) {
+					new_profiles.push(profile);
+					order.push(profile.id);
+				}
+		}
 
 		if ( array_equals(this.__profiles, new_profiles) )
 			return false;
@@ -215,8 +217,17 @@ export default class SettingsContext extends EventEmitter {
 		let changed = false;
 
 		for(const key in context)
-			if ( has(context, key) && context[key] !== this._context[key] ) {
-				this._context[key] = context[key];
+			if ( has(context, key) ) {
+				const val = context[key];
+				try {
+					if ( deep_equals(val, this._context[key]) )
+						continue;
+				} catch(err) {
+					/* no-op */
+					// This can catch a recursive structure error.
+				}
+
+				this._context[key] = val;
 				changed = true;
 			}
 
@@ -404,7 +415,7 @@ export default class SettingsContext extends EventEmitter {
 		if ( ! type )
 			throw new Error(`non-existent type for ${key}`)
 
-		return type.get(key, this.profiles(), this.manager.definitions.get(key), this.manager.log);
+		return type.get(key, this.profiles(), this.manager.definitions.get(key), this.manager.log, this);
 	}
 	/*	for(const profile of this.__profiles)
 			if ( profile.has(key) )
@@ -430,6 +441,16 @@ export default class SettingsContext extends EventEmitter {
 
 		return this._get(key, key, []);
 	}
+
+	getChanges(key, fn, ctx) {
+		this.onChange(key, fn, ctx);
+		fn.call(ctx, this.get(key));
+	}
+
+	onChange(key, fn, ctx) {
+		this.on(`changed:${key}`, fn, ctx);
+	}
+
 
 	uses(key) {
 		if ( key.startsWith('context.') )

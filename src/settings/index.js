@@ -5,12 +5,28 @@
 // ============================================================================
 
 import Module from 'utilities/module';
-import {deep_equals, has} from 'utilities/object';
+import {deep_equals, has, debounce, deep_copy} from 'utilities/object';
+import {parse as new_parse} from 'utilities/path-parser';
 
-import {CloudStorageProvider, LocalStorageProvider} from './providers';
 import SettingsProfile from './profile';
 import SettingsContext from './context';
 import MigrationManager from './migration';
+
+import * as PROVIDERS from './providers';
+import * as FILTERS from './filters';
+import * as CLEARABLES from './clearables';
+
+
+function postMessage(target, msg) {
+	try {
+		target.postMessage(msg, '*');
+		return true;
+	} catch(err) {
+		return false;
+	}
+}
+
+export const NO_SYNC_KEYS = ['session'];
 
 
 // ============================================================================
@@ -30,6 +46,29 @@ export default class SettingsManager extends Module {
 	constructor(...args) {
 		super(...args);
 
+		this.providers = {};
+		for(const key in PROVIDERS)
+			if ( has(PROVIDERS, key) ) {
+				const provider = PROVIDERS[key];
+				if ( provider.key && provider.supported() )
+					this.providers[provider.key] = provider;
+			}
+
+		// This cannot be modified at a future time, as providers NEED
+		// to be ready very early in FFZ intitialization. Seal it.
+		Object.seal(this.providers);
+
+		this.updateSoon = debounce(() => this.updateRoutes(), 50, false);
+
+		// Do we want to not enable any profiles?
+		try {
+			const params = new URL(window.location).searchParams;
+			if ( params ) {
+				if ( params.has('ffz-no-settings') )
+					this.disable_profiles = true;
+			}
+		} catch(err) { /* no-op */ }
+
 		// State
 		this.__contexts = [];
 		this.__profiles = [];
@@ -38,11 +77,35 @@ export default class SettingsManager extends Module {
 		this.ui_structures = new Map;
 		this.definitions = new Map;
 
-		// Create our provider as early as possible.
-		const provider = this.provider = this._createProvider();
-		this.log.info(`Using Provider: ${provider.constructor.name}`);
-		provider.on('changed', this._onProviderChange, this);
+		// Clearable Data Rules
+		this.clearables = {};
 
+		for(const key in CLEARABLES)
+			if ( has(CLEARABLES, key) )
+				this.clearables[key] = CLEARABLES[key];
+
+		// Filters
+		this.filters = {};
+
+		for(const key in FILTERS)
+			if ( has(FILTERS, key) )
+				this.filters[key] = FILTERS[key];
+
+
+		// Create our provider as early as possible.
+		this._provider_waiters = [];
+
+		this._createProvider().then(provider => {
+			this.provider = provider;
+			this.log.info(`Using Provider: ${provider.constructor.name}`);
+			provider.on('changed', this._onProviderChange, this);
+			provider.on('change-provider', () => {
+				this.emit(':change-provider');
+			});
+
+			for(const waiter of this._provider_waiters)
+				waiter(provider);
+		});
 
 		this.migrations = new MigrationManager(this);
 
@@ -57,11 +120,59 @@ export default class SettingsManager extends Module {
 			this.emit(`:uses_changed:${key}`, new_uses, old_uses);
 		});
 
+		this.main_context.on('context_changed', () => this._updateContextProxies());
+		this._context_proxies = new Set;
+
+		window.addEventListener('message', event => {
+			const type = event.data?.ffz_type;
+
+			if ( type === 'request-context' ) {
+				this._context_proxies.add(event.source);
+				this._updateContextProxies(event.source);
+
+			}
+		});
+
+		window.addEventListener('beforeunload', () => {
+			for(const proxy of this._context_proxies)
+				postMessage(proxy, {ffz_type: 'context-gone'});
+		});
 
 		// Don't wait around to be required.
 		this._start_time = performance.now();
 		this.enable();
 	}
+
+	_updateContextProxies(proxy) {
+		if ( ! proxy && ! this._context_proxies.size )
+			return;
+
+		const ctx = JSON.parse(JSON.stringify(this.main_context._context));
+		for(const key of NO_SYNC_KEYS)
+			if ( has(ctx, key) )
+				delete ctx[key];
+
+		if ( proxy )
+			postMessage(proxy, {ffz_type: 'context-update', ctx});
+		else
+			for(const proxy of this._context_proxies)
+				postMessage(proxy, {ffz_type: 'context-update', ctx});
+	}
+
+
+
+	addFilter(key, data) {
+		if ( this.filters[key] )
+			return this.log.warn('Tried to add already existing filter', key);
+
+		this.filters[key] = data;
+		this.updateRoutes();
+	}
+
+	getFilterBasicEditor() { // eslint-disable-line class-methods-use-this
+		return () => import(/* webpackChunkName: 'main-menu' */ './components/basic-toggle.vue')
+	}
+
 
 	generateLog() {
 		const out = [];
@@ -71,11 +182,22 @@ export default class SettingsManager extends Module {
 		return out.join('\n');
 	}
 
+	awaitProvider() {
+		if ( this.provider )
+			return Promise.resolve(this.provider);
+
+		return new Promise(s => {
+			this._provider_waiters.push(s);
+		});
+	}
+
+
 	/**
 	 * Called when the SettingsManager instance should be enabled.
 	 */
 	async onEnable() {
 		// Before we do anything else, make sure the provider is ready.
+		await this.awaitProvider();
 		await this.provider.awaitReady();
 
 		// When the router updates we additional routes, make sure to
@@ -140,8 +262,86 @@ export default class SettingsManager extends Module {
 	// Backup and Restore
 	// ========================================================================
 
-	async getFullBackup() {
+	async generateBackupFile() {
+		if ( await this._needsZipBackup() ) {
+			const blob = await this._getZipBackup();
+			return new File([blob], 'ffz-settings.zip', {type: 'application/zip'});
+		}
+
+		const settings = await this.getSettingsDump();
+		return new File([JSON.stringify(settings)], 'ffz-settings.json', {type: 'application/json;charset=utf-8'});
+	}
+
+
+	async _needsZipBackup() {
 		// Before we do anything else, make sure the provider is ready.
+		await this.awaitProvider();
+		await this.provider.awaitReady();
+
+		if ( ! this.provider.supportsBlobs )
+			return false;
+
+		const keys = await this.provider.blobKeys();
+		return Array.isArray(keys) ? keys.length > 0 : false;
+	}
+
+
+	async _getZipBackup() {
+		// Before we do anything else, make sure the provider is ready.
+		await this.awaitProvider();
+		await this.provider.awaitReady();
+
+		// Create our ZIP file.
+		const JSZip = (await import(/* webpackChunkName: "zip" */ 'jszip')).default,
+			out = new JSZip();
+
+		// Normal Settings
+		const settings = await this.getSettingsDump();
+		out.file('settings.json', JSON.stringify(settings));
+
+		// Blob Settings
+		const metadata = {};
+
+		if ( this.provider.supportsBlobs ) {
+			const keys = await this.provider.blobKeys();
+			for(const key of keys) {
+				const safe_key = encodeURIComponent(key),
+					blob = await this.provider.getBlob(key); // eslint-disable-line no-await-in-loop
+				if ( ! blob )
+					continue;
+
+				const md = {key};
+
+				if ( blob instanceof File ) {
+					md.type = 'file';
+					md.name = blob.name;
+					md.modified = blob.lastModified;
+					md.mime = blob.type;
+
+				} else if ( blob instanceof Blob ) {
+					md.type = 'blob';
+
+				} else if ( blob instanceof ArrayBuffer ) {
+					md.type = 'ab';
+				} else if ( blob instanceof Uint8Array ) {
+					md.type = 'ui8';
+				} else
+					continue;
+
+				metadata[safe_key] = md;
+				out.file(`blobs/${safe_key}`, blob);
+			}
+		}
+
+		out.file('blobs.json', JSON.stringify(metadata));
+
+		return out.generateAsync({type: 'blob'});
+	}
+
+
+	async getSettingsDump() {
+		// Before we do anything else, make sure the provider is ready.
+		await this.awaitProvider();
 		await this.provider.awaitReady();
 
 		const out = {
@@ -165,24 +365,30 @@ export default class SettingsManager extends Module {
 	}
 
 
-	checkUpdates() {
+	async checkUpdates() {
+		await this.awaitProvider();
+		await this.provider.awaitReady();
+
+		if ( ! this.provider.shouldUpdate )
+			return;
+
 		const promises = [];
 		for(const profile of this.__profiles) {
-			if ( ! profile || ! profile.url )
+			if ( ! profile || ! profile.url || profile.pause_updates )
 				continue;
 
 			const out = profile.checkUpdate();
 			promises.push(out instanceof Promise ? out : Promise.resolve(out));
 		}
 
-		Promise.all(promises).then(data => {
-			let success = 0;
-			for(const thing of data)
-				if ( thing )
-					success++;
+		const data = await Promise.all(promises);
 
-			this.log.info(`Successfully refreshed ${success} of ${data.length} profiles from remote URLs.`);
-		});
+		let success = 0;
+		for(const thing of data)
+			if ( thing )
+				success++;
+
+		this.log.info(`Successfully refreshed ${success} of ${data.length} profiles from remote URLs.`);
 	}
 
 
@@ -191,16 +397,133 @@ export default class SettingsManager extends Module {
 	// ========================================================================
 
 	/**
+	 * Return an object with all the known, supported providers.
+	 * @returns {Object} The object.
+	 */
+	getProviders() {
+		return this.providers;
+	}
+
+	/**
+	 * Return the key of the active provider.
+	 * @returns {String} The key for the active provider
+	 */
+	getActiveProvider() {
+		return this._active_provider;
+	}
+
+	/**
 	 * Evaluate the environment that FFZ is running in and then decide which
 	 * provider should be used to retrieve and store settings.
+	 *
+	 * @returns {SettingsProvider} The provider to store everything.
 	 */
-	_createProvider() {
-		// If the loader has reported support for cloud settings...
-		if ( document.body.classList.contains('ffz-cloud-storage') )
-			return new CloudStorageProvider(this);
+	async _createProvider() {
+		// If we should be using Cross-Origin Storage Bridge, do so.
+		//if ( this.providers.cosb && this.providers.cosb.supported() )
+		//	return new this.providers.cosb(this);
 
-		// Fallback
-		return new LocalStorageProvider(this);
+		let wanted = localStorage.ffzProviderv2;
+		if ( wanted == null )
+			wanted = localStorage.ffzProviderv2 = await this.sniffProvider();
+
+		if ( this.providers[wanted] ) {
+			const provider = new this.providers[wanted](this);
+			if ( wanted === 'idb' )
+				this._idb = provider;
+
+			this._active_provider = wanted;
+			return provider;
+		}
+
+		// Fallback to localStorage if nothing else was wanted and available.
+		this._active_provider = 'local';
+		return new this.providers.local(this);
+	}
+
+
+	/**
+	 * Evaluate the environment and attempt to guess which provider we should
+	 * use for storing settings. This is necessary in case localStorage is
+	 * cleared while we have settings stored in IndexedDB.
+	 *
+	 * In the future, this may default to IndexedDB for new users.
+	 *
+	 * @returns {String} The key for which provider we should use.
+	 */
+	async sniffProvider() {
+		const providers = Object.values(this.providers);
+		providers.sort((a,b) => b.priority - a.priority);
+
+		for(const provider of providers) {
+			if ( provider.supported() && provider.hasContent && await provider.hasContent() ) // eslint-disable-line no-await-in-loop
+				return provider.key;
+		}
+
+		// Fallback to local if no provider indicated present settings.
+		return 'local';
+	}
+
+	/**
+	 * Change to a new settings provider. This immediately prevents changes
+	 * to the old provider, and will reload the page when settings have
+	 * been transfered over.
+	 *
+	 * @param {String} key The key of the new provider to swap to.
+	 * @param {Boolean} transfer Whether or not settings should be transferred
+	 * from the current provider.
+	 */
+	async changeProvider(key, transfer) {
+		if ( ! this.providers[key] || ! this.providers[key].supported() )
+			throw new Error(`Invalid provider: ${key}`);
+
+		// If we're changing to the current provider... well, that doesn't make
+		// a lot of sense, does it? Abort!
+		if ( key === this._active_provider )
+			return;
+
+		const old_provider = this.provider;
+		this.provider = null;
+
+		// Let all other tabs know what's up.
+		old_provider.broadcastTransfer();
+
+		// Are we transfering settings?
+		if ( transfer ) {
+			const new_provider = new this.providers[key](this);
+			await new_provider.awaitReady();
+
+			if ( new_provider.allowTransfer && old_provider.allowTransfer ) {
+				old_provider.disableEvents();
+
+				// When transfering, we clear all existing settings.
+				await new_provider.clear();
+				if ( new_provider.supportsBlobs )
+					await new_provider.clearBlobs();
+
+				for(const [key,val] of old_provider.entries())
+					new_provider.set(key, val);
+
+				if ( old_provider.supportsBlobs && new_provider.supportsBlobs ) {
+					for(const key of await old_provider.blobKeys() ) {
+						const blob = await old_provider.getBlob(key); // eslint-disable-line no-await-in-loop
+						if ( blob )
+							await new_provider.setBlob(key, blob); // eslint-disable-line no-await-in-loop
+					}
+
+					await old_provider.clearBlobs();
+				}
+
+				old_provider.clear();
+
+				await old_provider.flush();
+				await new_provider.flush();
+			}
+		}
+
+		// Change over.
+		localStorage.ffzProviderv2 = key;
+		location.reload();
 	}
 
 
@@ -302,8 +625,10 @@ export default class SettingsManager extends Module {
 		let reordered = false,
 			changed = false;
 
-		for(const profile of old_profiles)
+		for(const profile of old_profiles) {
 			profile.off('toggled', this._onProfileToggled, this);
+			profile.hotkey_enabled = false;
+		}
 
 		for(const profile_data of raw_profiles) {
 			const id = profile_data.id,
@@ -348,8 +673,10 @@ export default class SettingsManager extends Module {
 			changed = true;
 		}
 
-		for(const profile of profiles)
+		for(const profile of profiles) {
 			profile.on('toggled', this._onProfileToggled, this);
+			profile.hotkey_enabled = true;
+		}
 
 		if ( ! changed && ! old_ids.size || suppress_events )
 			return;
@@ -390,6 +717,7 @@ export default class SettingsManager extends Module {
 		this.__profiles.unshift(profile);
 
 		profile.on('toggled', this._onProfileToggled, this);
+		profile.hotkey_enabled = true;
 
 		this._saveProfiles();
 		this.emit(':profile-created', profile);
@@ -402,15 +730,18 @@ export default class SettingsManager extends Module {
 	 * @param {number|SettingsProfile} id - The profile to delete
 	 */
 	deleteProfile(id) {
-		if ( typeof id === 'object' && id.id )
+		if ( typeof id === 'object' && id.id != null )
 			id = id.id;
 
 		const profile = this.__profile_ids[id];
 		if ( ! profile )
 			return;
 
-		if ( profile.id === 0 )
-			throw new Error('cannot delete default profile');
+		if ( this.__profiles.length === 1 )
+			throw new Error('cannot delete only profile');
+
+		/*if ( profile.id === 0 )
+			throw new Error('cannot delete default profile');*/
 
 		profile.off('toggled', this._onProfileToggled, this);
 		profile.clear();
@@ -473,6 +804,8 @@ export default class SettingsManager extends Module {
 
 	context(env) { return this.main_context.context(env) }
 	get(key) { return this.main_context.get(key); }
+	getChanges(key, fn, ctx) { return this.main_context.getChanges(key, fn, ctx); }
+	onChange(key, fn, ctx) { return this.main_context.onChange(key, fn, ctx); }
 	uses(key) { return this.main_context.uses(key) }
 	update(key) { return this.main_context.update(key) }
 
@@ -524,7 +857,8 @@ export default class SettingsManager extends Module {
 			if ( ! ui.key && ui.title )
 				ui.key = ui.title.toSnakeCase();
 
-			if ( (ui.component === 'setting-select-box' || ui.component === 'setting-combo-box') && Array.isArray(ui.data) ) {
+			if ( (ui.component === 'setting-select-box' || ui.component === 'setting-combo-box') && Array.isArray(ui.data) && ! ui.no_i18n
+					&& key !== 'ffzap.core.highlight_sound' ) { // TODO: Remove workaround.
 				const i18n_base = `${ui.i18n_key || `setting.entry.${key}`}.values`;
 				for(const value of ui.data) {
 					if ( value.i18n_key === undefined && value.value !== undefined )
@@ -537,7 +871,11 @@ export default class SettingsManager extends Module {
 			this.on(`:changed:${key}`, definition.changed);
 
 		this.definitions.set(key, definition);
-		this.emit(':added-definition', key, definition);
+
+		// Do not re-emit `added-definition` when re-adding an existing
+		// setting. Prevents the settings UI from goofing up.
+		if ( ! old_definition || Array.isArray(old_definition) )
+			this.emit(':added-definition', key, definition);
 	}
 
 
@@ -562,15 +900,41 @@ export default class SettingsManager extends Module {
 		if ( ! ui.key && ui.title )
 			ui.key = ui.title.toSnakeCase();
 
+		const old_definition = this.ui_structures.get(key);
 		this.ui_structures.set(key, definition);
-		this.emit(':added-definition', key, definition);
+
+		// Do not re-emit `added-definition` when re-adding an existing
+		// setting. Prevents the settings UI from goofing up.
+		if ( ! old_definition )
+			this.emit(':added-definition', key, definition);
+	}
+
+
+	addClearable(key, definition) {
+		if ( typeof key === 'object' ) {
+			for(const k in key)
+				if ( has(key, k) )
+					this.addClearable(k, key[k]);
+			return;
+		}
+
+		this.clearables[key] = definition;
+	}
+
+	getClearables() {
+		return deep_copy(this.clearables);
 	}
 }
 
 
-const PATH_SPLITTER = /(?:^|\s*([~>]+))\s*([^~>@]+)\s*(?:@([^~>]+))?/g;
-
 export function parse_path(path) {
+	return new_parse(path);
+}
+
+
+/*const PATH_SPLITTER = /(?:^|\s*([~>]+))\s*([^~>@]+)\s*(?:@([^~>]+))?/g;
+
+export function old_parse_path(path) {
 	const tokens = [];
 	let match;
 
@@ -583,14 +947,20 @@ export function parse_path(path) {
 
 			opts = { key, title, page, tab };
 
-		if ( options )
-			Object.assign(opts, JSON.parse(options));
+		if ( options ) {
+			try {
+				Object.assign(opts, JSON.parse(options));
+			} catch(err) {
+				console.warn('Matched segment:', options);
+				throw err;
+			}
+		}
 
 		tokens.push(opts);
 	}
 
 	return tokens;
-}
+}*/
 
 
 export function format_path_tokens(tokens) {

@@ -47,6 +47,7 @@ export class Module extends EventEmitter {
 		this.__state = this.onLoad || this.onEnable ?
 			State.DISABLED : State.ENABLED;
 
+		this.__time('instance');
 		this.emit(':registered');
 	}
 
@@ -77,6 +78,20 @@ export class Module extends EventEmitter {
 
 
 	// ========================================================================
+	// Timing
+	// ========================================================================
+
+	__time(event) {
+		if ( this.root.timing ) {
+			if ( typeof event !== 'object' )
+				event = {event};
+			event.module = this.__path || 'core';
+			this.root.timing.addEvent(event);
+		}
+	}
+
+
+	// ========================================================================
 	// State! Glorious State
 	// ========================================================================
 
@@ -101,6 +116,17 @@ export class Module extends EventEmitter {
 		const path = this.__path || this.name,
 			state = this.__load_state;
 
+		if ( chain.includes(this) )
+			return Promise.reject(new CyclicDependencyError(`cyclic load requirements when loading ${initial}`, [...chain, this]));
+		else if ( this.load_requires )
+			for(const name of this.load_requires) {
+				const module = this.resolve(name);
+				if ( module && chain.includes(module) )
+					return Promise.reject(new CyclicDependencyError(`cyclic load requirements when loading ${initial}`, [...chain, this, module]));
+			}
+
+		chain.push(this);
+
 		if ( state === State.LOADING )
 			return this.__load_promise;
 
@@ -110,11 +136,7 @@ export class Module extends EventEmitter {
 		else if ( state === State.UNLOADING )
 			return Promise.reject(new ModuleError(`attempted to load module ${path} while module is being unloaded`));
 
-		else if ( chain.includes(this) )
-			return Promise.reject(new CyclicDependencyError(`cyclic load requirements when loading ${initial}`, chain));
-
-		chain.push(this);
-
+		this.__time('load-start');
 		this.__load_state = State.LOADING;
 		return this.__load_promise = (async () => {
 			if ( this.load_requires ) {
@@ -130,17 +152,21 @@ export class Module extends EventEmitter {
 				await Promise.all(promises);
 			}
 
-			if ( this.onLoad )
+			if ( this.onLoad ) {
+				this.__time('load-self');
 				return this.onLoad(...args);
+			}
 
 		})().then(ret => {
 			this.__load_state = State.LOADED;
 			this.__load_promise = null;
+			this.__time('load-end');
 			this.emit(':loaded', this);
 			return ret;
 		}).catch(err => {
 			this.__load_state = State.UNLOADED;
 			this.__load_promise = null;
+			this.__time('load-end');
 			throw err;
 		});
 	}
@@ -149,6 +175,17 @@ export class Module extends EventEmitter {
 	__unload(args, initial, chain) {
 		const path = this.__path || this.name,
 			state = this.__load_state;
+
+		if ( chain.includes(this) )
+			return Promise.reject(new CyclicDependencyError(`cyclic load requirements when unloading ${initial}`, [...chain, this]));
+		else if ( this.load_dependents )
+			for(const dep of this.load_dependents) {
+				const module = this.resolve(dep);
+				if ( module && chain.includes(module) )
+					return Promise.reject(new CyclicDependencyError(`cyclic load requirements when unloading ${initial}`, [...chain, this, module]));
+			}
+
+		chain.push(this);
 
 		if ( state === State.UNLOADING )
 			return this.__load_promise;
@@ -162,11 +199,7 @@ export class Module extends EventEmitter {
 		else if ( state === State.LOADING )
 			return Promise.reject(new ModuleError(`attempted to unload module ${path} while module is being loaded`));
 
-		else if ( chain.includes(this) )
-			return Promise.reject(new CyclicDependencyError(`cyclic load requirements when unloading ${initial}`, chain));
-
-		chain.push(this);
-
+		this.__time('unload-start');
 		this.__load_state = State.UNLOADING;
 		return this.__load_promise = (async () => {
 			if ( this.__state !== State.DISABLED )
@@ -177,7 +210,8 @@ export class Module extends EventEmitter {
 				for(const name of this.load_dependents) {
 					const module = this.resolve(name);
 					if ( ! module )
-						throw new ModuleError(`cannot find depending module ${name} when unloading ${path}`);
+						//throw new ModuleError(`cannot find depending module ${name} when unloading ${path}`);
+						continue;
 
 					promises.push(module.__unload([], initial, Array.from(chain)));
 				}
@@ -185,16 +219,19 @@ export class Module extends EventEmitter {
 				await Promise.all(promises);
 			}
 
+			this.__time('unload-self');
 			return this.onUnload(...args);
 
 		})().then(ret => {
 			this.__load_state = State.UNLOADED;
 			this.__load_promise = null;
+			this.__time('unload-end');
 			this.emit(':unloaded', this);
 			return ret;
 		}).catch(err => {
 			this.__load_state = State.LOADED;
 			this.__load_promise = null;
+			this.__time('unload-end');
 			throw err;
 		});
 	}
@@ -203,6 +240,17 @@ export class Module extends EventEmitter {
 	__enable(args, initial, chain) {
 		const path = this.__path || this.name,
 			state = this.__state;
+
+		if ( chain.includes(this) )
+			return Promise.reject(new CyclicDependencyError(`cyclic requirements when enabling ${initial}`, [...chain, this]));
+		else if ( this.requires )
+			for(const name of this.requires) {
+				const module = this.resolve(name);
+				if ( module && chain.includes(module) )
+					return Promise.reject(new CyclicDependencyError(`cyclic requirements when enabling ${initial}`, [...chain, this, module]));
+			}
+
+		chain.push(this);
 
 		if ( state === State.ENABLING )
 			return this.__state_promise;
@@ -213,11 +261,7 @@ export class Module extends EventEmitter {
 		else if ( state === State.DISABLING )
 			return Promise.reject(new ModuleError(`attempted to enable module ${path} while module is being disabled`));
 
-		else if ( chain.includes(this) )
-			return Promise.reject(new CyclicDependencyError(`cyclic requirements when enabling ${initial}`, chain));
-
-		chain.push(this);
-
+		this.__time('enable-start');
 		this.__state = State.ENABLING;
 		return this.__state_promise = (async () => {
 			const promises = [],
@@ -242,18 +286,22 @@ export class Module extends EventEmitter {
 				}
 
 			await Promise.all(promises);
-			if ( this.onEnable )
+			if ( this.onEnable ) {
+				this.__time('enable-self');
 				return this.onEnable(...args);
+			}
 
 		})().then(ret => {
 			this.__state = State.ENABLED;
 			this.__state_promise = null;
+			this.__time('enable-end');
 			this.emit(':enabled', this);
 			return ret;
 
 		}).catch(err => {
 			this.__state = State.DISABLED;
 			this.__state_promise = null;
+			this.__time('enable-end');
 			throw err;
 		});
 	}
@@ -262,6 +310,17 @@ export class Module extends EventEmitter {
 	__disable(args, initial, chain) {
 		const path = this.__path || this.name,
 			state = this.__state;
+
+		if ( chain.includes(this) )
+			return Promise.reject(new CyclicDependencyError(`cyclic requirements when disabling ${initial}`, [...chain, this]));
+		else if ( this.dependents )
+			for(const dep of this.dependents) {
+				const module = this.resolve(dep);
+				if ( module && chain.includes(module) )
+					return Promise.reject(new CyclicDependencyError(`cyclic requirements when disabling ${initial}`, [...chain, this, dep]));
+			}
+
+		chain.push(this);
 
 		if ( state === State.DISABLING )
 			return this.__state_promise;
@@ -275,11 +334,7 @@ export class Module extends EventEmitter {
 		else if ( state === State.ENABLING )
 			return Promise.reject(new ModuleError(`attempted to disable module ${path} but module is being enabled`));
 
-		else if ( chain.includes(this) )
-			return Promise.reject(new CyclicDependencyError(`cyclic requirements when disabling ${initial}`, chain));
-
-		chain.push(this);
-
+		this.__time('disable-start');
 		this.__state = State.DISABLING;
 		return this.__state_promise = (async () => {
 			if ( this.__load_state !== State.LOADED )
@@ -292,7 +347,9 @@ export class Module extends EventEmitter {
 				for(const name of this.dependents) {
 					const module = this.resolve(name);
 					if ( ! module )
-						throw new ModuleError(`cannot find depending module ${name} when disabling ${path}`);
+						// Assume a non-existent module isn't enabled.
+						//throw new ModuleError(`cannot find depending module ${name} when disabling ${path}`);
+						continue;
 
 					promises.push(module.__disable([], initial, Array.from(chain)));
 				}
@@ -300,17 +357,20 @@ export class Module extends EventEmitter {
 				await Promise.all(promises);
 			}
 
+			this.__time('disable-self');
 			return this.onDisable(...args);
 
 		})().then(ret => {
 			this.__state = State.DISABLED;
 			this.__state_promise = null;
+			this.__time('disable-end');
 			this.emit(':disabled', this);
 			return ret;
 
 		}).catch(err => {
 			this.__state = State.ENABLED;
 			this.__state_promise = null;
+			this.__time('disable-end');
 			throw err;
 		});
 	}
@@ -583,11 +643,11 @@ export class Module extends EventEmitter {
 	}
 
 
-	populate(ctx, log) {
+	async populate(ctx, log) {
 		log = log || this.log;
 		const added = {};
 		for(const raw_path of ctx.keys()) {
-			const raw_module = ctx(raw_path),
+			const raw_module = await ctx(raw_path), // eslint-disable-line no-await-in-loop
 				module = raw_module.module || raw_module.default,
 				lix = raw_path.lastIndexOf('.'),
 				trimmed = lix > 2 ? raw_path.slice(2, lix) : raw_path,
@@ -635,7 +695,7 @@ export class ModuleError extends Error { }
 
 export class CyclicDependencyError extends ModuleError {
 	constructor(message, modules) {
-		super(message);
+		super(`${message} (${modules.map(x => x.path).join(' => ')})`);
 		this.modules = modules;
 	}
 }

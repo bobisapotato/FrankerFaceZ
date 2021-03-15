@@ -151,16 +151,19 @@ export class TranslationManager extends Module {
 				if ( this.availableLocales.includes(val) )
 					return val;
 
+				if ( val === 'no' && this.availableLocales.includes('nb') )
+					return 'nb';
+
 				const idx = val.indexOf('-');
 				if ( idx === -1 )
 					return 'en';
 
 				val = val.slice(0, idx);
-				return this.availableLocales.includes(val) ? val : 'en'
+				return this.availableLocales.includes(val) ? val : 'en';
 			},
 
 			ui: {
-				path: 'Appearance > Localization >> General',
+				path: 'Appearance > Localization >> General @{"sort":-100}',
 				title: 'Language',
 				description: `FrankerFaceZ is lovingly translated by volunteers from our community. Thank you. If you're interested in helping to translate FrankerFaceZ, please [join our Discord](https://discord.gg/UrAkGhT) and ask about localization.`,
 
@@ -169,6 +172,97 @@ export class TranslationManager extends Module {
 			},
 
 			changed: val => this.locale = val
+		});
+
+
+		this.settings.add('i18n.format.date', {
+			default: 'default',
+			ui: {
+				path: 'Appearance > Localization >> Formatting',
+				title: 'Date Format',
+				description: 'The default date format. Custom date formats are formated using the [Day.js](https://day.js.org/docs/en/display/format) library.',
+				component: 'setting-combo-box',
+				extra: {
+					before: true,
+					mode: 'date',
+					component: 'format-preview'
+				},
+				data: () => {
+					const out = [], now = new Date;
+					for (const [key,fmt] of Object.entries(this._.formats.date)) {
+						out.push({
+							value: key, title: `${this.formatDate(now, key)} (${key})`
+						})
+					}
+
+					return out;
+				}
+			},
+
+			changed: val => {
+				this._.defaultDateFormat = val;
+				this.emit(':update')
+			}
+		});
+
+		this.settings.add('i18n.format.time', {
+			default: 'short',
+			ui: {
+				path: 'Appearance > Localization >> Formatting',
+				title: 'Time Format',
+				description: 'The default time format. Custom time formats are formated using the [Day.js](https://day.js.org/docs/en/display/format) library.',
+				component: 'setting-combo-box',
+				extra: {
+					before: true,
+					mode: 'time',
+					component: 'format-preview'
+				},
+				data: () => {
+					const out = [], now = new Date;
+					for (const [key,fmt] of Object.entries(this._.formats.time)) {
+						out.push({
+							value: key, title: `${this.formatTime(now, key)} (${key})`
+						})
+					}
+
+					return out;
+				}
+			},
+
+			changed: val => {
+				this._.defaultTimeFormat = val;
+				this.emit(':update')
+			}
+		});
+
+		this.settings.add('i18n.format.datetime', {
+			default: 'medium',
+			ui: {
+				path: 'Appearance > Localization >> Formatting',
+				title: 'Date-Time Format',
+				description: 'The default combined date-time format. Custom time formats are formated using the [Day.js](https://day.js.org/docs/en/display/format) library.',
+				component: 'setting-combo-box',
+				extra: {
+					before: true,
+					mode: 'datetime',
+					component: 'format-preview'
+				},
+				data: () => {
+					const out = [], now = new Date;
+					for (const [key,fmt] of Object.entries(this._.formats.datetime)) {
+						out.push({
+							value: key, title: `${this.formatDateTime(now, key)} (${key})`
+						})
+					}
+
+					return out;
+				}
+			},
+
+			changed: val => {
+				this._.defaultDateTimeFormat = val;
+				this.emit(':update')
+			}
 		});
 	}
 
@@ -241,6 +335,9 @@ export class TranslationManager extends Module {
 
 		this._ = new NewTransCore({ //TranslationCore({
 			warn: (...args) => this.log.warn(...args),
+			defaultDateFormat: this.settings.get('i18n.format.date'),
+			defaultTimeFormat: this.settings.get('i18n.format.time'),
+			defaultDateTimeFormat: this.settings.get('i18n.format.datetime')
 		});
 
 		if ( window.BroadcastChannel ) {
@@ -334,7 +431,7 @@ export class TranslationManager extends Module {
 
 
 	get locale() {
-		return this._.locale;
+		return this._ && this._.locale;
 	}
 
 	set locale(new_locale) {
@@ -484,8 +581,14 @@ export class TranslationManager extends Module {
 			return;
 		}
 
-		if ( typeof ast === 'object' && ast.v )
-			out[ast.v] = shallow_copy(get(ast.v, options));
+		if ( typeof ast === 'object' && ast.v ) {
+			const val = get(ast.v, options);
+			// Skip React objects.
+			if ( val && val['$$typeof'] )
+				return;
+
+			out[ast.v] = shallow_copy(val);
+		}
 	}
 
 
@@ -642,6 +745,10 @@ export class TranslationManager extends Module {
 
 	formatNumber(...args) {
 		return this._.formatNumber(...args);
+	}
+
+	formatDuration(...args) {
+		return this._.formatDuration(...args);
 	}
 
 	formatDate(...args) {

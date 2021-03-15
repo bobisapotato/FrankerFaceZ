@@ -1,7 +1,7 @@
 .ffz--profile-selector {
 	position: relative;
 
-	.tw-balloon {
+	.ffz-balloon {
 		position: absolute;
 		margin-top: 0 !important
 	}
@@ -51,8 +51,8 @@
 
 	&:focus {
 		box-shadow:
-			inset 0 0 0 1px var(--color-twitch-purple-8),
-			0 0 6px -2px var(--color-twitch-purple-8);
+			inset 0 0 0 1px var(--ffz-color-accent-8),
+			0 0 6px -2px var(--ffz-color-accent-8);
 	}
 
 	&:focus,
@@ -61,7 +61,7 @@
 	}
 }
 
-.ffz--profile-row__icon {
+.ffz--profile-row__icon-tray {
 	position: absolute;
 	top: 0.5rem; right: 0.5rem;
 	font-size: 1.6rem;

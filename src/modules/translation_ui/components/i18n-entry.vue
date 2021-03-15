@@ -21,8 +21,8 @@
 				<textarea
 					ref="editor"
 					v-model="value"
-					:class="{'tw-textarea--error': ! valid}"
-					class="tw-block tw-font-size-6 tw-full-width tw-textarea"
+					:class="{'ffz-textarea--error': ! valid}"
+					class="tw-block tw-font-size-6 tw-full-width ffz-textarea"
 					@input="onInput"
 					@blur="onBlur"
 					@focus="open = true"
@@ -86,14 +86,14 @@
 						:id="`ui-ctx:${entry.key}:${val.key}`"
 						:type="val.is_number ? 'number' : 'text'"
 						:value="val.value"
-						class="tw-full-width tw-block tw-border-radius-medium tw-font-size-6 tw-input tw-pd-x-1 tw-pd-y-05"
+						class="tw-full-width tw-block tw-border-radius-medium tw-font-size-6 ffz-input tw-pd-x-1 tw-pd-y-05"
 						@input="updateContext(val.key, $event)"
 					>
 				</div>
 			</div>
 
 			<button
-				class="tw-button-icon tw-mg-l-05 tw-relative tw-tooltip-wrapper"
+				class="tw-button-icon tw-mg-l-05 tw-relative tw-tooltip__container"
 				@click="open = false"
 			>
 				<span class="tw-button-icon__icon">
