@@ -16,7 +16,7 @@ const regex_cache = {};
 
 function getRequireRegex(name) {
 	if ( ! regex_cache[name] )
-		regex_cache[name] = new RegExp(`\\b${name}\\(([0-9a-zA-Z_+]+)\\)`, 'g');
+		regex_cache[name] = new RegExp(`\\b${name}\\(([0-9e_+]+)\\)`, 'g');
 
 	return regex_cache[name];
 }
@@ -93,6 +93,20 @@ export default class WebMunch extends Module {
 		if ( ! name ) {
 			if ( attempts > 240 ) {
 				this.log.error("Unable to find webpack's loader after one minute.");
+
+				try {
+					const possibilities = [];
+					for(const key of Object.keys(window))
+						if ( has(window, key) && typeof key === 'string' && /webpack/i.test(key) && ! /ffz/i.test(key) )
+							possibilities.push(key);
+
+					if ( possibilities.length )
+						this.log.info('Possible Matches: ', possibilities.join(', '));
+					else
+						this.log.info('No possible matches found.');
+
+				} catch(err) { /* no-op */ }
+
 				this._resolveLoadWait(true);
 				return;
 			}
@@ -497,12 +511,27 @@ export default class WebMunch extends Module {
 					regex.lastIndex = 0;
 					let match;
 
+					// Here, we check all the modules this module depends on
+					// so that we don't require a module with missing requirements
+					// because webpack sucks.
 					while((match = regex.exec(str))) {
-						const mod_id = match[1];
+						let mod_id = match[1];
+						if ( mod_id === 'e' )
+							continue;
+
+						// Modules are all numbers, but some are written in e notation.
+						// We need to correct that for string comparison.
+						if ( /^\d+e\d+$/.test(mod_id) ) {
+							const bits = mod_id.split('e');
+							mod_id = `${parseInt(bits[0], 10) * (10 ** parseInt(bits[1], 10))}`;
+						}
+
 						reqs.add(mod_id);
 
-						if ( ! this._require.m[mod_id] )
+						if ( ! banned && ! this._require.m[mod_id] ) {
+							this.log.verbose(`Unable to load module ${id} due to missing dependency ${mod_id}`);
 							banned = true;
+						}
 					}
 
 				} else

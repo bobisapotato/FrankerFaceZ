@@ -3,8 +3,9 @@
 		<div class="tw-align-items-center tw-flex tw-flex-nowrap tw-flex-row tw-full-width">
 			<div class="tw-mg-r-1">
 				<img
-					v-if="current"
+					v-if="current && current.image"
 					:src="current.image"
+					:style="{backgroundColor: current.color || null}"
 					class="ffz--badge-term-image"
 				>
 				<div
@@ -43,14 +44,68 @@
 				</select>
 			</div>
 			<div v-if="colored" class="tw-flex-shrink-0 tw-mg-r-05">
-				<color-picker v-if="editing" v-model="edit_data.c" :nullable="true" :show-input="false" />
-				<div v-else-if="term.c" class="ffz-color-preview">
+				<color-picker
+					v-if="editing"
+					v-model="edit_data.c"
+					:nullable="true"
+					:show-input="false"
+					:tooltip="t('settings.term.color.tip', 'Color')"
+				/>
+				<div v-else-if="term.c" class="ffz-color-preview tw-relative tw-tooltip__container">
 					<figure :style="`background-color: ${term.c}`">
 						&nbsp;
 					</figure>
+					<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-right">
+						{{ t('settings.term.color.tip', 'Color') }}
+					</div>
 				</div>
 			</div>
-			<div v-if="removable" class="tw-flex-shrink-0 tw-mg-r-05 tw-relative tw-tooltip__container">
+			<div
+				v-if="priority"
+				:class="editing ? 'tw-mg-r-05' : 'tw-mg-x-05'"
+				class="tw-flex-shrink-0 tw-relative tw-tooltip__container"
+			>
+				<span v-if="! editing">{{ term.p }}</span>
+				<input
+					v-else
+					v-model.number="edit_data.p"
+					type="number"
+					step="1"
+					class="tw-block tw-border-radius-medium tw-font-size-6 ffz-min-width-unset ffz-input tw-pd-x-1 tw-pd-y-05"
+					style="width: 5rem"
+				>
+				<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-right">
+					{{ t('settings.terms.priority.tip', 'Priority') }}
+				</div>
+			</div>
+			<div
+				v-if="removable && (editing || display.remove)"
+				class="tw-flex-shrink-0 tw-mg-r-05 tw-mg-y-05 tw-flex tw-align-items-center ffz-checkbox tw-relative tw-tooltip__container"
+			>
+				<input
+					v-if="editing"
+					:id="'remove$' + id"
+					v-model="edit_data.remove"
+					type="checkbox"
+					class="ffz-min-width-unset ffz-checkbox__input"
+				>
+
+				<label
+					v-if="editing"
+					:for="'remove$' + id"
+					class="ffz-min-width-unset ffz-checkbox__label"
+				>
+					<span class="tw-mg-l-05 ffz-i-trash" />
+				</label>
+				<span
+					v-else-if="term.remove"
+					class="ffz-i-trash tw-pd-x-1"
+				/>
+				<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-right">
+					{{ t('setting.terms.remove.on', 'Remove matching messages from chat.') }}
+				</div>
+			</div>
+			<!--div v-if="removable" class="tw-flex-shrink-0 tw-mg-r-05 tw-relative tw-tooltip__container">
 				<button
 					v-if="editing"
 					:class="{active: edit_data.remove}"
@@ -74,7 +129,7 @@
 						{{ t('setting.terms.remove.off', 'Do not remove matching messages from chat.') }}
 					</span>
 				</div>
-			</div>
+			</div-->
 			<div v-if="adding" class="tw-flex-shrink-0">
 				<button
 					class="tw-button"
@@ -152,6 +207,10 @@ export default {
 			type: Boolean,
 			default: false
 		},
+		priority: {
+			type: Boolean,
+			default: false
+		},
 		removable: {
 			type: Boolean,
 			default: false
@@ -163,16 +222,18 @@ export default {
 	},
 
 	data() {
+		const this_id = `badge-term$${id++}`;
+
 		if ( this.adding )
 			return {
-				editor_id: id++,
+				id: this_id,
 				deleting: false,
 				editing: true,
 				edit_data: deep_copy(this.term)
 			};
 
 		return {
-			editor_id: id++,
+			id: this_id,
 			deleting: false,
 			editing: false,
 			edit_data: null
@@ -228,6 +289,13 @@ export default {
 		},
 
 		save() {
+			if ( this.priority && this.edit_data.p ) {
+				if ( typeof this.edit_data.p === 'number' )
+					this.edit_data.p = Math.floor(this.edit_data.p);
+				else
+					this.edit_data.p = 0;
+			}
+
 			if ( this.valid )
 				this.$emit('save', this.edit_data);
 			this.cancel();

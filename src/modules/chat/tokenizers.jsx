@@ -19,6 +19,35 @@ const EMOTE_CLASS = 'chat-image chat-line__message--emote',
 	MENTION_REGEX = /^(['"*([{<\\/]*)(@)((?:[^\u0000-\u007F]|[\w-])+)(?:\b|$)/; // eslint-disable-line no-control-regex
 
 
+export const FilterTester = {
+	type: 'filter_test',
+	priority: 1000,
+
+	render(token, createElement) {
+		if ( ! token.msg.filters?.length )
+			return null;
+
+		return (<div class="ffz-pill tw-mg-l-1">
+			{ token.msg.filters.join(', ') }
+		</div>);
+	},
+
+	process(tokens, msg) {
+		if ( ! tokens || ! tokens.length || ! this.context.get('chat.filtering.debug') )
+			return tokens;
+
+		msg.filters = [];
+
+		tokens.push({
+			type: 'filter_test',
+			msg
+		});
+
+		return tokens;
+	}
+}
+
+
 // ============================================================================
 // Links
 // ============================================================================
@@ -162,40 +191,38 @@ export const Links = {
 			const text = token.text;
 			let idx = 0, match;
 
-			//if ( use_new ) {
 			while((match = NEW_LINK_REGEX.exec(text))) {
 				const nix = match.index;
 				if ( idx !== nix )
 					out.push({type: 'text', text: text.slice(idx, nix)});
 
+				let url = match[0];
+				if ( url.endsWith(')') ) {
+					let open = 1, i = url.length - 1;
+					while(i--) {
+						const chr = url[i];
+						if ( chr === ')' )
+							open++;
+						else if ( chr === '(' )
+							open--;
+
+						if ( ! open )
+							break;
+					}
+
+					if ( open )
+						url = url.slice(0, url.length - 1);
+				}
+
 				out.push({
 					type: 'link',
-					url: `${match[1] ? '' : 'https://'}${match[0]}`,
+					url: `${match[1] ? '' : 'https://'}${url}`,
 					is_mail: false,
-					text: match[0]
+					text: url
 				});
 
-				idx = nix + match[0].length;
+				idx = nix + url.length;
 			}
-
-			/*} else {
-				while((match = LINK_REGEX.exec(text))) {
-					const nix = match.index + (match[1] ? match[1].length : 0);
-					if ( idx !== nix )
-						out.push({type: 'text', text: text.slice(idx, nix)});
-
-					const is_mail = ! match[3] && match[2].indexOf('/') === -1 && match[2].indexOf('@') !== -1;
-
-					out.push({
-						type: 'link',
-						url: (match[3] ? '' : is_mail ? 'mailto:' : 'https://') + match[2],
-						is_mail,
-						text: match[2]
-					});
-
-					idx = nix + match[2].length;
-				}
-			}*/
 
 			if ( idx < text.length )
 				out.push({type: 'text', text: text.slice(idx)});
@@ -348,7 +375,8 @@ export const Mentions = {
 		if ( ! tokens || ! tokens.length )
 			return tokens;
 
-		const can_highlight_user = user && user.login && user.login == msg.user.login && ! this.context.get('chat.filtering.process-own');
+		const can_highlight_user = user && user.login && user.login == msg.user.login && ! this.context.get('chat.filtering.process-own'),
+			priority = this.context.get('chat.filtering.mention-priority');
 
 		let regex, login, display, mentionable = false;
 		if ( user && user.login && ! can_highlight_user ) {
@@ -407,10 +435,8 @@ export const Mentions = {
 						recipient: rlower
 					});
 
-					if ( mentioned ) {
-						(msg.highlights = (msg.highlights || new Set())).add('mention');
-						msg.mentioned = true;
-					}
+					if ( mentioned )
+						this.applyHighlight(msg, priority, null, 'mention', true);
 
 					// Push the remaining text from the token.
 					text.push(segment.substr(match[0].length));
@@ -440,20 +466,14 @@ export const UserHighlights = {
 		if ( user && user.login && user.login == msg.user.login && ! this.context.get('chat.filtering.process-own') )
 			return tokens;
 
-		const colors = this.context.get('chat.filtering.highlight-basic-users--color-regex');
-		if ( ! colors || ! colors.size )
+		const list = this.context.get('__filter:highlight-users');
+		if ( ! list || ! list.length )
 			return tokens;
 
 		const u = msg.user;
-		for(const [color, regex] of colors) {
-			if ( regex.test(u.login) || regex.test(u.displayName) ) {
-				(msg.highlights = (msg.highlights || new Set())).add('user');
-				msg.mentioned = true;
-				if ( color ) {
-					msg.mention_color = color;
-					return tokens;
-				}
-			}
+		for(const [priority, color, regex] of list) {
+			if ( regex.test(u.login) || regex.test(u.displayName) )
+				this.applyHighlight(msg, priority, color, 'user');
 		}
 
 		return tokens;
@@ -464,52 +484,77 @@ export const BlockedUsers = {
 	type: 'user_block',
 	priority: 100,
 
-	process(tokens, msg, user) {
+	process(tokens, msg, user, haltable) {
 		if ( user && user.login && user.login == msg.user.login && ! this.context.get('chat.filtering.process-own') )
 			return tokens;
 
 		const u = msg.user,
-			regexes = this.context.get('chat.filtering.highlight-basic-users-blocked--regex');
+			regexes = this.context.get('__filter:block-users');
 		if ( ! regexes )
 			return tokens;
 
 		if ( regexes[1] && (regexes[1].test(u.login) || regexes[1].test(u.displayName)) ) {
 			msg.deleted = true;
 			msg.ffz_removed = true;
-		}
+			if ( haltable )
+				msg.ffz_halt_tokens = true;
 
-		if ( ! msg.deleted && regexes[0] && (regexes[0].test(u.login) || regexes[0].test(u.displayName)) )
+		} else if ( ! msg.deleted && regexes[0] && (regexes[0].test(u.login) || regexes[0].test(u.displayName)) )
 			msg.deleted = true;
 
 		return tokens;
 	}
 }
 
-export const BadgeHighlights = {
-	type: 'badge_highlight',
-	priority: 80,
+function getBadgeIDs(msg) {
+	let keys = msg.badges ? Object.keys(msg.badges) : null;
+	if ( ! msg.ffz_badges )
+		return keys;
 
-	process(tokens, msg, user) {
+	if ( ! keys )
+		keys = [];
+
+	for(const badge of msg.ffz_badges)
+		if ( badge?.id )
+			keys.push(badge.id);
+
+	return keys;
+}
+
+export const BadgeStuff = {
+	type: 'badge_stuff',
+	priority: 97,
+
+	process(tokens, msg, user, haltable) {
 		if ( user && user.login && user.login == msg.user.login && ! this.context.get('chat.filtering.process-own') )
 			return tokens;
 
-		const badges = msg.badges;
-		if ( ! badges )
+		const highlights = this.context.get('__filter:highlight-badges'),
+			list = this.context.get('__filter:block-badges');
+
+		if ( ! highlights && ! list )
 			return tokens;
 
-		const colors = this.context.get('chat.filtering.highlight-basic-badges--colors');
-		if ( ! colors || ! colors.size )
+		const keys = getBadgeIDs(msg);
+		if ( ! keys || ! keys.length )
 			return tokens;
 
-		for(const badge of Object.keys(badges)) {
-			if ( colors.has(badge) ) {
-				const color = colors.get(badge);
-				(msg.highlights = (msg.highlights || new Set())).add('badge');
-				msg.mentioned = true;
-				if ( color ) {
-					msg.mention_color = color;
-					return tokens;
-				}
+		for(const badge of keys) {
+			if ( list && list[1].includes(badge) ) {
+				msg.deleted = true;
+				msg.ffz_removed = true;
+				if ( haltable )
+					msg.ffz_halt_tokens = true;
+				return tokens;
+			}
+
+			if ( list && ! msg.deleted && list[0].includes(badge) )
+				msg.deleted = true;
+
+			if ( highlights && highlights.has(badge) ) {
+				const details = highlights.get(badge);
+				if ( Array.isArray(details) && details.length > 1 )
+					this.applyHighlight(msg, details[0], details[1], 'badge');
 			}
 		}
 
@@ -517,25 +562,27 @@ export const BadgeHighlights = {
 	}
 }
 
-export const BlockedBadges = {
+/*export const BlockedBadges = {
 	type: 'badge_block',
 	priority: 100,
-	process(tokens, msg, user) {
+	process(tokens, msg, user, haltable) {
 		if ( user && user.login && user.login == msg.user.login && ! this.context.get('chat.filtering.process-own') )
 			return tokens;
 
-		const badges = msg.badges;
-		if ( ! badges )
-			return tokens;
-
-		const list = this.context.get('chat.filtering.highlight-basic-badges-blocked--list');
+		const list = this.context.get('__filter:block-badges');
 		if ( ! list || (! list[0].length && ! list[1].length) )
 			return tokens;
 
-		for(const badge of Object.keys(badges)) {
+		const keys = getBadgeIDs(msg);
+		if ( ! keys || ! keys.length )
+			return tokens;
+
+		for(const badge of keys) {
 			if ( list[1].includes(badge) ) {
 				msg.deleted = true;
 				msg.ffz_removed = true;
+				if ( haltable )
+					msg.ffz_halt_tokens = true;
 				return tokens;
 			}
 
@@ -545,7 +592,7 @@ export const BlockedBadges = {
 
 		return tokens;
 	}
-}
+}*/
 
 export const CustomHighlights = {
 	type: 'highlight',
@@ -564,12 +611,16 @@ export const CustomHighlights = {
 		if ( user && user.login && user.login == msg.user.login && ! this.context.get('chat.filtering.process-own') )
 			return tokens;
 
-		const data = this.context.get('chat.filtering.highlight-basic-terms--color-regex');
+		const data = this.context.get('__filter:highlight-terms');
 		if ( ! data )
 			return tokens;
 
+		let had_match = false;
 		if ( data.non ) {
-			for(const [color, regexes] of data.non) {
+			for(const [priority, color, regexes] of data.non) {
+				if ( had_match && msg.mention_priority != null && msg.mention_priority > priority )
+					break;
+
 				let matched = false;
 				if ( regexes[0] ) {
 					regexes[0].lastIndex = 0;
@@ -581,10 +632,8 @@ export const CustomHighlights = {
 				}
 
 				if ( matched ) {
-					(msg.highlights = (msg.highlights || new Set())).add('term');
-					msg.mentioned = true;
-					msg.mention_color = color || msg.mention_color;
-					break;
+					had_match = true;
+					this.applyHighlight(msg, priority, color, 'term');
 				}
 			}
 		}
@@ -592,7 +641,7 @@ export const CustomHighlights = {
 		if ( ! data.hl )
 			return tokens;
 
-		for(const [color, regexes] of data.hl) {
+		for(const [priority, color, regexes] of data.hl) {
 			const out = [];
 			for(const token of tokens) {
 				if ( token.type !== 'text' ) {
@@ -624,10 +673,7 @@ export const CustomHighlights = {
 					if ( idx !== nix )
 						out.push({type: 'text', text: text.slice(idx, nix)});
 
-					(msg.highlights = (msg.highlights || new Set())).add('term');
-					msg.mentioned = true;
-					if ( ! msg.mention_color )
-						msg.mention_color = color;
+					this.applyHighlight(msg, priority, color, 'term');
 
 					out.push({
 						type: 'highlight',
@@ -649,7 +695,7 @@ export const CustomHighlights = {
 }
 
 
-function blocked_process(tokens, msg, regex, do_remove) {
+function blocked_process(tokens, msg, regexes, do_remove, haltable) {
 	const out = [];
 	for(const token of tokens) {
 		if ( token.type !== 'text' ) {
@@ -657,11 +703,23 @@ function blocked_process(tokens, msg, regex, do_remove) {
 			continue;
 		}
 
-		regex.lastIndex = 0;
 		const text = token.text;
 		let idx = 0, match;
 
-		while((match = regex.exec(text))) {
+		while(idx < text.length) {
+			if ( regexes[0] )
+				regexes[0].lastIndex = idx;
+			if ( regexes[1] )
+				regexes[1].lastIndex = idx;
+
+			match = regexes[0] ? regexes[0].exec(text) : null;
+			const second = regexes[1] ? regexes[1].exec(text) : null;
+			if ( second && (! match || match.index > second.index) )
+				match = second;
+
+			if ( ! match )
+				break;
+
 			const raw_nix = match.index,
 				offset = match[1] ? match[1].length : 0,
 				nix = raw_nix + offset;
@@ -669,15 +727,18 @@ function blocked_process(tokens, msg, regex, do_remove) {
 			if ( idx !== nix )
 				out.push({type: 'text', text: text.slice(idx, nix)});
 
+			if ( do_remove ) {
+				msg.ffz_removed = true;
+				if ( haltable )
+					return tokens;
+			}
+
 			out.push({
 				type: 'blocked',
 				text: match[0].slice(offset)
 			});
 
-			if ( do_remove )
-				msg.ffz_removed = true;
-
-			idx = raw_nix + match[0].length;
+			idx = raw_nix + match[0].length
 		}
 
 		if ( idx < text.length )
@@ -715,22 +776,27 @@ export const BlockedTerms = {
 		]
 	},
 
-	process(tokens, msg, user) {
+	process(tokens, msg, user, haltable) {
 		if ( ! tokens || ! tokens.length )
 			return tokens;
 
 		if ( user && user.login && user.login == msg.user.login && ! this.context.get('chat.filtering.process-own') )
 			return tokens;
 
-		const regexes = this.context.get('chat.filtering.highlight-basic-blocked--regex');
+		const regexes = this.context.get('__filter:block-terms');
 		if ( ! regexes )
 			return tokens;
 
-		if ( regexes[0] )
-			tokens = blocked_process(tokens, msg, regexes[0], false);
+		if ( regexes.remove ) {
+			tokens = blocked_process(tokens, msg, regexes.remove, true, haltable);
+			if ( haltable && msg.ffz_removed ) {
+				msg.ffz_halt_tokens = true;
+				return tokens;
+			}
+		}
 
-		if ( regexes[1] )
-			tokens = blocked_process(tokens, msg, regexes[1], true);
+		if ( regexes.non )
+			tokens = blocked_process(tokens, msg, regexes.non, false, haltable);
 
 		return tokens;
 	}
@@ -750,7 +816,7 @@ const AM_DESCRIPTIONS = {
 
 export const AutomoddedTerms = {
 	type: 'amterm',
-	priority: 99,
+	priority: 95,
 
 	component: () => import(/* webpackChunkName: 'vue-chat' */ './components/chat-automod-blocked.vue'),
 
@@ -792,7 +858,7 @@ export const AutomoddedTerms = {
 		];
 	},
 
-	process(tokens, msg) {
+	process(tokens, msg, user, haltable) {
 		if ( ! tokens || ! tokens.length || ! msg.flags || ! Array.isArray(msg.flags.list) )
 			return tokens;
 
@@ -827,6 +893,8 @@ export const AutomoddedTerms = {
 
 		if ( remove ) {
 			msg.ffz_removed = true;
+			if ( haltable )
+				msg.ffz_halt_tokens = true;
 			return tokens;
 		}
 
@@ -1091,12 +1159,31 @@ export const CheerEmotes = {
 // ============================================================================
 
 const render_emote = (token, createElement, wrapped) => {
+	const hover = token.anim === 2,
+		big = token.big && token.can_big;
+	let src, srcSet, hoverSrc, hoverSrcSet, normalSrc, normalSrcSet;
+
+	if ( token.anim === 1 && token.animSrc ) {
+		src = big ? token.animSrc2 : token.animSrc;
+		srcSet = big ? token.animSrcSet2 : token.animSrcSet;
+	} else {
+		src = big ? token.src2 : token.src;
+		srcSet = big ? token.srcSet2 : token.srcSet;
+	}
+
+	if ( hover && token.animSrc ) {
+		normalSrc = src;
+		normalSrcSet = srcSet;
+		hoverSrc = big ? token.animSrc2 : token.animSrc;
+		hoverSrcSet = big ? token.animSrcSet2 : token.animSrcSet;
+	}
+
 	const mods = token.modifiers || [], ml = mods.length,
 		emote = createElement('img', {
-			class: `${EMOTE_CLASS} ffz-tooltip${token.provider === 'ffz' ? ' ffz-emote' : token.provider === 'emoji' ? ' ffz-emoji' : ''}`,
+			class: `${EMOTE_CLASS} ffz-tooltip${hoverSrc ? ' ffz-hover-emote' : ''}${token.provider === 'ffz' ? ' ffz-emote' : token.provider === 'emoji' ? ' ffz-emoji' : ''}`,
 			attrs: {
-				src: token.big && token.src2 || token.src,
-				srcSet: token.big && token.srcSet2 || token.srcSet,
+				src,
+				srcSet,
 				alt: token.text,
 				height: (token.big && ! token.can_big && token.height) ? `${token.height * 2}px` : undefined,
 				'data-tooltip-type': 'emote',
@@ -1105,6 +1192,10 @@ const render_emote = (token, createElement, wrapped) => {
 				'data-set': token.set,
 				'data-code': token.code,
 				'data-variant': token.variant,
+				'data-normal-src': normalSrc,
+				'data-normal-src-set': normalSrcSet,
+				'data-hover-src': hoverSrc,
+				'data-hover-src-set': hoverSrcSet,
 				'data-modifiers': ml ? mods.map(x => x.id).join(' ') : null,
 				'data-modifier-info': ml ? JSON.stringify(mods.map(x => [x.set, x.id])) : null
 			}
@@ -1147,11 +1238,30 @@ export const AddonEmotes = {
 	},
 
 	render(token, createElement, wrapped) {
+		const hover = token.anim === 2,
+			big = token.big && token.can_big;
+		let src, srcSet, hoverSrc, hoverSrcSet, normalSrc, normalSrcSet;
+
+		if ( token.anim === 1 && token.animSrc ) {
+			src = big ? token.animSrc2 : token.animSrc;
+			srcSet = big ? token.animSrcSet2 : token.animSrcSet;
+		} else {
+			src = big ? token.src2 : token.src;
+			srcSet = big ? token.srcSet2 : token.srcSet;
+		}
+
+		if ( hover && token.animSrc ) {
+			normalSrc = src;
+			normalSrcSet = srcSet;
+			hoverSrc = big ? token.animSrc2 : token.animSrc;
+			hoverSrcSet = big ? token.animSrcSet2 : token.animSrcSet;
+		}
+
 		const mods = token.modifiers || [], ml = mods.length,
 			emote = (<img
-				class={`${EMOTE_CLASS} ffz--pointer-events ffz-tooltip${token.provider === 'ffz' ? ' ffz-emote' : token.provider === 'emoji' ? ' ffz-emoji' : ''}`}
-				src={token.big && token.src2 || token.src}
-				srcSet={token.big && token.srcSet2 || token.srcSet}
+				class={`${EMOTE_CLASS} ffz--pointer-events ffz-tooltip${hoverSrc ? ' ffz-hover-emote' : ''}${token.provider === 'ffz' ? ' ffz-emote' : token.provider === 'emoji' ? ' ffz-emoji' : ''}`}
+				src={src}
+				srcSet={srcSet}
 				height={(token.big && ! token.can_big && token.height) ? `${token.height * 2}px` : undefined}
 				alt={token.text}
 				data-tooltip-type="emote"
@@ -1160,6 +1270,10 @@ export const AddonEmotes = {
 				data-set={token.set}
 				data-code={token.code}
 				data-variant={token.variant}
+				data-normal-src={normalSrc}
+				data-normal-src-set={normalSrcSet}
+				data-hover-src={hoverSrc}
+				data-hover-src-set={hoverSrcSet}
 				data-modifiers={ml ? mods.map(x => x.id).join(' ') : null}
 				data-modifier-info={ml ? JSON.stringify(mods.map(x => [x.set, x.id])) : null}
 				onClick={this.emotes.handleClick}
@@ -1265,10 +1379,19 @@ export const AddonEmotes = {
 						'emote.owner', 'By: {owner}',
 						{owner: emote.owner.display_name});
 
-				if ( emote.urls[4] )
-					preview = emote.urls[4];
-				else if ( emote.urls[2] )
-					preview = emote.urls[2];
+				const anim = this.context.get('tooltip.emote-images.animated');
+				if ( anim && emote.animated?.[1] ) {
+					if ( emote.animated[4] )
+						preview = emote.animated[4];
+					else if ( emote.animated[2] )
+						preview = emote.animated[2];
+
+				} else {
+					if ( emote.urls[4] )
+						preview = emote.urls[4];
+					else if ( emote.urls[2] )
+						preview = emote.urls[2];
+				}
 			}
 
 		} else if ( provider === 'emoji' ) {
@@ -1330,6 +1453,9 @@ export const AddonEmotes = {
 		if ( ! tokens || ! tokens.length )
 			return tokens;
 
+		if ( this.context.get('chat.emotes.enabled') !== 2 )
+			return tokens;
+
 		const emotes = this.emotes.getEmotes(
 			msg.user.id,
 			msg.user.login,
@@ -1341,6 +1467,7 @@ export const AddonEmotes = {
 			return tokens;
 
 		const big = this.context.get('chat.emotes.2x'),
+			anim = this.context.get('chat.emotes.animated'),
 			out = [];
 
 		let last_token, emote;
@@ -1391,7 +1518,8 @@ export const AddonEmotes = {
 
 					const t = Object.assign({
 						modifiers: [],
-						big
+						big,
+						anim
 					}, emote.token);
 					out.push(t);
 					last_token = t;
@@ -1411,6 +1539,16 @@ export const AddonEmotes = {
 		return out;
 	}
 }
+
+/*AddonEmotes.tooltip.interactive = function(target) {
+	const mods = target.dataset.modifiers;
+	return mods && mods.length > 0;
+}
+
+AddonEmotes.tooltip.delayHide = function(target) {
+	const mods = target.dataset.modifiers;
+	return mods && mods.length > 0 ? 100 : 0;
+}*/
 
 
 // ============================================================================
@@ -1499,6 +1637,9 @@ export const TwitchEmotes = {
 		if ( ! msg.ffz_emotes )
 			return tokens;
 
+		if ( this.context.get('chat.emotes.enabled') < 1 )
+			return tokens;
+
 		const data = msg.ffz_emotes,
 			big = this.context.get('chat.emotes.2x'),
 			use_replacements = this.context.get('chat.fix-bad-emotes'),
@@ -1574,11 +1715,13 @@ export const TwitchEmotes = {
 
 				let src, srcSet;
 				let src2, srcSet2;
+				let can_big = true;
 
 				const replacement = REPLACEMENTS[e_id];
 				if ( replacement && use_replacements ) {
 					src = `${REPLACEMENT_BASE}${replacement}`;
 					srcSet = '';
+					can_big = false;
 
 				} else {
 					src = `${TWITCH_EMOTE_BASE}${e_id}/1.0`;
@@ -1599,6 +1742,8 @@ export const TwitchEmotes = {
 					src2,
 					srcSet2,
 					big,
+					can_big,
+					height: 28, // Not always accurate but close enough.
 					text: text.slice(e_start - t_start, e_end - t_start).join(''),
 					modifiers: []
 				});

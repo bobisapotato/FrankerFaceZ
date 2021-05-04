@@ -27,14 +27,6 @@
 					autocorrect="off"
 				>
 			</div>
-			<div v-if="colored" class="tw-flex-shrink-0 tw-mg-l-05">
-				<color-picker v-if="editing" v-model="edit_data.c" :nullable="true" :show-input="false" />
-				<div v-else-if="term.c" class="ffz-color-preview">
-					<figure :style="`background-color: ${term.c}`">
-						&nbsp;
-					</figure>
-				</div>
-			</div>
 			<div class="tw-flex-shrink-0 tw-mg-x-05">
 				<span v-if="! editing">{{ term_type }}</span>
 				<select
@@ -55,6 +47,41 @@
 						{{ t('setting.terms.type.regex', 'Regex') }}
 					</option>
 				</select>
+			</div>
+			<div v-if="colored" class="tw-flex-shrink-0 tw-mg-r-05">
+				<color-picker
+					v-if="editing"
+					v-model="edit_data.c"
+					:nullable="true"
+					:show-input="false"
+					:tooltip="t('settings.term.color.tip', 'Color')"
+				/>
+				<div v-else-if="term.c" class="ffz-color-preview tw-relative tw-tooltip__container">
+					<figure :style="`background-color: ${term.c}`">
+						&nbsp;
+					</figure>
+					<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-right">
+						{{ t('settings.term.color.tip', 'Color') }}
+					</div>
+				</div>
+			</div>
+			<div
+				v-if="priority"
+				:class="editing ? 'tw-mg-r-05' : 'tw-mg-x-05'"
+				class="tw-flex-shrink-0 tw-relative tw-tooltip__container"
+			>
+				<span v-if="! editing">{{ term.p }}</span>
+				<input
+					v-else
+					v-model.number="edit_data.p"
+					type="number"
+					step="1"
+					class="tw-block tw-border-radius-medium tw-font-size-6 ffz-min-width-unset ffz-input tw-pd-x-1 tw-pd-y-05"
+					style="width: 5rem"
+				>
+				<div class="tw-tooltip tw-tooltip--down tw-tooltip--align-right">
+					{{ t('settings.terms.priority.tip', 'Priority') }}
+				</div>
 			</div>
 			<div
 				v-if="editing || display.s"
@@ -243,6 +270,10 @@ export default {
 			type: Boolean,
 			default: false
 		},
+		priority: {
+			type: Boolean,
+			default: false
+		},
 		words: {
 			type: Boolean,
 			default: true
@@ -262,16 +293,18 @@ export default {
 	},
 
 	data() {
+		const this_id = `term$${id++}`;
+
 		if ( this.adding )
 			return {
-				id: id++,
+				id: this_id,
 				deleting: false,
 				editing: true,
 				edit_data: deep_copy(this.term)
 			};
 
 		return {
-			id: id++,
+			id: this_id,
 			deleting: false,
 			editing: false,
 			edit_data: null
@@ -358,6 +391,13 @@ export default {
 		},
 
 		save() {
+			if ( this.priority && this.edit_data.p ) {
+				if ( typeof this.edit_data.p === 'number' )
+					this.edit_data.p = Math.floor(this.edit_data.p);
+				else
+					this.edit_data.p = 0;
+			}
+
 			this.$emit('save', this.edit_data);
 			this.cancel();
 		}

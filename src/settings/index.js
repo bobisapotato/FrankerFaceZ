@@ -12,6 +12,8 @@ import SettingsProfile from './profile';
 import SettingsContext from './context';
 import MigrationManager from './migration';
 
+import * as PROCESSORS from './processors';
+import * as VALIDATORS from './validators';
 import * as PROVIDERS from './providers';
 import * as FILTERS from './filters';
 import * as CLEARABLES from './clearables';
@@ -77,6 +79,20 @@ export default class SettingsManager extends Module {
 		this.ui_structures = new Map;
 		this.definitions = new Map;
 
+		// Validators
+		this.validators = {};
+
+		for(const key in VALIDATORS)
+			if ( has(VALIDATORS, key) )
+				this.validators[key] = VALIDATORS[key];
+
+		// Processors
+		this.processors = {};
+
+		for(const key in PROCESSORS)
+			if ( has(PROCESSORS, key) )
+				this.processors[key] = PROCESSORS[key];
+
 		// Clearable Data Rules
 		this.clearables = {};
 
@@ -99,6 +115,9 @@ export default class SettingsManager extends Module {
 			this.provider = provider;
 			this.log.info(`Using Provider: ${provider.constructor.name}`);
 			provider.on('changed', this._onProviderChange, this);
+			provider.on('quota-exceeded', err => {
+				this.emit(':quota-exceeded', err);
+			});
 			provider.on('change-provider', () => {
 				this.emit(':change-provider');
 			});
@@ -923,6 +942,46 @@ export default class SettingsManager extends Module {
 
 	getClearables() {
 		return deep_copy(this.clearables);
+	}
+
+
+	addProcessor(key, fn) {
+		if ( typeof key === 'object' ) {
+			for(const k in key)
+				if ( has(key, k) )
+					this.addProcessor(k, key[k]);
+			return;
+		}
+
+		this.processors[key] = fn;
+	}
+
+	getProcessor(key) {
+		return this.processors[key];
+	}
+
+	getProcessors() {
+		return deep_copy(this.processors);
+	}
+
+
+	addValidator(key, fn) {
+		if ( typeof key === 'object' ) {
+			for(const k in key)
+				if ( has(key, k) )
+					this.addValidator(k, key[k]);
+			return;
+		}
+
+		this.validators[key] = fn;
+	}
+
+	getValidator(key) {
+		return this.validators[key];
+	}
+
+	getValidators() {
+		return deep_copy(this.validators);
 	}
 }
 

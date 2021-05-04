@@ -6,6 +6,7 @@
 
 import {glob_to_regex, escape_regex} from 'utilities/object';
 import {createTester} from 'utilities/filtering';
+import { DEBUG } from 'utilities/constants';
 
 let safety = null;
 
@@ -179,6 +180,30 @@ export const Moderator = {
 	editor: () => import(/* webpackChunkName: 'main-menu' */ './components/basic-toggle.vue')
 };
 
+export const Debug = {
+	createTest(config) {
+		return () => DEBUG === config;
+	},
+
+	title: 'Is Developer Mode',
+	i18n: 'settings.filter.dev',
+
+	default: true,
+	editor: () => import(/* webpackChunkName: 'main-menu' */ './components/basic-toggle.vue')
+};
+
+export const AddonDebug = {
+	createTest(config) {
+		return ctx => ctx.addonDev == config
+	},
+
+	title: 'Is Addon Developer Mode',
+	i18n: 'settings.filter.addon-dev',
+
+	default: true,
+	editor: () => import(/* webpackChunkName: 'main-menu' */ './components/basic-toggle.vue')
+}
+
 export const SquadMode = {
 	createTest(config) {
 		return ctx => ctx.ui && ctx.ui.squadModeEnabled === config;
@@ -223,7 +248,7 @@ export const Page = {
 					if ( typeof part === 'object' ) {
 						const val = config.values[part.name];
 						if ( val && val.length )
-							parts.push([i, val]);
+							parts.push([i, val.toLowerCase()]);
 
 						i++;
 					}
@@ -237,9 +262,14 @@ export const Page = {
 			if ( ! ctx.route || ! ctx.route_data || ctx.route.name !== name )
 				return false;
 
-			for(const [index, value] of parts)
-				if ( ctx.route_data[index] !== value )
+			for(const [index, value] of parts) {
+				let thing = ctx.route_data[index];
+				if ( typeof thing === 'string' )
+					thing = thing.toLowerCase();
+
+				if ( thing !== value )
 					return false;
+			}
 
 			return true;
 		}

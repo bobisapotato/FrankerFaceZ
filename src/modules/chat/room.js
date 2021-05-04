@@ -20,7 +20,7 @@ export default class Room {
 		this.refs = new Set;
 		this.style = new ManagedStyle(`room--${login}`);
 
-		this.emote_sets = new SourcedSet;
+		this.emote_sets = null; // new SourcedSet;
 		this.badges = null;
 		this.users = {};
 		this.user_ids = {};
@@ -111,6 +111,7 @@ export default class Room {
 				this.style.delete('css');
 
 			this.buildModBadgeCSS();
+			this.buildVIPBadgeCSS();
 		}
 
 		if ( other.badges && ! this.badges ) {
@@ -305,9 +306,11 @@ export default class Room {
 
 		this.data = d;
 
-		if ( d.set )
+		if ( d.set ) {
+			if ( ! this.emote_sets )
+				this.emote_sets = new SourcedSet;
 			this.emote_sets.set('main', d.set);
-		else
+		} else if ( this.emote_sets )
 			this.emote_sets.delete('main');
 
 
@@ -329,6 +332,7 @@ export default class Room {
 			this.style.delete('css');
 
 		this.buildModBadgeCSS();
+		this.buildVIPBadgeCSS();
 
 		return true;
 	}
@@ -341,6 +345,9 @@ export default class Room {
 	addSet(provider, set_id, data) {
 		if ( this.destroyed )
 			return;
+
+		if ( ! this.emote_sets )
+			this.emote_sets = new SourcedSet;
 
 		let changed = false;
 		if ( ! this.emote_sets.sourceIncludes(provider, set_id) ) {
@@ -357,7 +364,7 @@ export default class Room {
 	}
 
 	removeSet(provider, set_id) {
-		if ( this.destroyed )
+		if ( this.destroyed || ! this.emote_sets )
 			return;
 
 		if ( this.emote_sets.sourceIncludes(provider, set_id) ) {
@@ -422,6 +429,28 @@ export default class Room {
 		}
 
 		this.buildBadgeCSS();
+	}
+
+	buildVIPBadgeCSS() {
+		if ( this.destroyed )
+			return;
+
+		if ( ! this.data || ! this.data.vip_badge || ! this.manager.context.get('chat.badges.custom-vip') )
+			return this.style.delete('vip-badge');
+
+		const urls = this.data.vip_badge,
+			image = `url("${urls[1]}")`;
+
+		let image_set;
+		if ( urls[2] || urls[4] )
+			image_set = `${WEBKIT}image-set(${image} 1x${urls[2] ? `, url("${urls[2]}") 2x` : ''}${urls[4] ? `, url("${urls[4]}") 4x` : ''})`;
+
+		this.style.set('vip-badge', `[data-room-id="${this.id}"] .ffz-badge[data-badge="vip"] {
+			background-color: transparent;
+			background-image: ${image};
+			${image_set ? `background-image: ${image_set};` : ''}
+			${WEBKIT}mask-image: unset;
+		}`);
 	}
 
 	buildModBadgeCSS() {

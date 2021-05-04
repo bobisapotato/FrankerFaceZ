@@ -16,6 +16,9 @@ import ProviderMixin from './provider-mixin';
 import {NO_SYNC_KEYS, parse_path} from 'src/settings';
 
 function format_term(term) {
+	if ( typeof term !== 'string' )
+		return term;
+
 	return term.replace(/<[^>]*>/g, '').toLocaleLowerCase();
 }
 
@@ -295,6 +298,9 @@ export default class MainMenu extends Module {
 			return;
 
 		this.requestPage(path);
+
+		if ( ! this.showing )
+			this.emit('site.menu_button:clicked');
 	}
 
 
@@ -842,6 +848,9 @@ export default class MainMenu extends Module {
 
 			deleteProfile: profile => settings.deleteProfile(profile),
 
+			getProcessor: key => settings.getProcessor(key),
+			getValidator: key => settings.getValidator(key),
+
 			getFFZ: () => t.resolve('core'),
 
 			provider: {
@@ -921,7 +930,7 @@ export default class MainMenu extends Module {
 				},
 
 				_context_changed() {
-					this.context = deep_copy(context._context);
+					this.context = deep_copy(context.__context);
 					const profiles = context.manager.__profiles,
 						ids = this.profiles = context.__profiles.map(profile => profile.id);
 

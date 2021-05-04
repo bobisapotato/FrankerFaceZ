@@ -9,6 +9,7 @@ import dayjs from 'dayjs';
 import Module from 'utilities/module';
 import {createElement, ManagedStyle} from 'utilities/dom';
 import {timeout, has, glob_to_regex, escape_regex, split_chars} from 'utilities/object';
+import {Color} from 'utilities/color';
 
 import Badges from './badges';
 import Emotes from './emotes';
@@ -23,6 +24,17 @@ import * as RICH_PROVIDERS from './rich_providers';
 import Actions from './actions';
 
 export const SEPARATORS = '[\\s`~<>!-#%-\\x2A,-/:;\\x3F@\\x5B-\\x5D_\\x7B}\\u00A1\\u00A7\\u00AB\\u00B6\\u00B7\\u00BB\\u00BF\\u037E\\u0387\\u055A-\\u055F\\u0589\\u058A\\u05BE\\u05C0\\u05C3\\u05C6\\u05F3\\u05F4\\u0609\\u060A\\u060C\\u060D\\u061B\\u061E\\u061F\\u066A-\\u066D\\u06D4\\u0700-\\u070D\\u07F7-\\u07F9\\u0830-\\u083E\\u085E\\u0964\\u0965\\u0970\\u0AF0\\u0DF4\\u0E4F\\u0E5A\\u0E5B\\u0F04-\\u0F12\\u0F14\\u0F3A-\\u0F3D\\u0F85\\u0FD0-\\u0FD4\\u0FD9\\u0FDA\\u104A-\\u104F\\u10FB\\u1360-\\u1368\\u1400\\u166D\\u166E\\u169B\\u169C\\u16EB-\\u16ED\\u1735\\u1736\\u17D4-\\u17D6\\u17D8-\\u17DA\\u1800-\\u180A\\u1944\\u1945\\u1A1E\\u1A1F\\u1AA0-\\u1AA6\\u1AA8-\\u1AAD\\u1B5A-\\u1B60\\u1BFC-\\u1BFF\\u1C3B-\\u1C3F\\u1C7E\\u1C7F\\u1CC0-\\u1CC7\\u1CD3\\u2010-\\u2027\\u2030-\\u2043\\u2045-\\u2051\\u2053-\\u205E\\u207D\\u207E\\u208D\\u208E\\u2329\\u232A\\u2768-\\u2775\\u27C5\\u27C6\\u27E6-\\u27EF\\u2983-\\u2998\\u29D8-\\u29DB\\u29FC\\u29FD\\u2CF9-\\u2CFC\\u2CFE\\u2CFF\\u2D70\\u2E00-\\u2E2E\\u2E30-\\u2E3B\\u3001-\\u3003\\u3008-\\u3011\\u3014-\\u301F\\u3030\\u303D\\u30A0\\u30FB\\uA4FE\\uA4FF\\uA60D-\\uA60F\\uA673\\uA67E\\uA6F2-\\uA6F7\\uA874-\\uA877\\uA8CE\\uA8CF\\uA8F8-\\uA8FA\\uA92E\\uA92F\\uA95F\\uA9C1-\\uA9CD\\uA9DE\\uA9DF\\uAA5C-\\uAA5F\\uAADE\\uAADF\\uAAF0\\uAAF1\\uABEB\\uFD3E\\uFD3F\\uFE10-\\uFE19\\uFE30-\\uFE52\\uFE54-\\uFE61\\uFE63\\uFE68\\uFE6A\\uFE6B\\uFF01-\\uFF03\\uFF05-\\uFF0A\\uFF0C-\\uFF0F\\uFF1A\\uFF1B\\uFF1F\\uFF20\\uFF3B-\\uFF3D\\uFF3F\\uFF5B\\uFF5D\\uFF5F-\\uFF65]';
+
+function sortPriorityColorTerms(list) {
+	list.sort((a,b) => {
+		if ( a[0] < b[0] ) return 1;
+		if ( a[0] > b[0] ) return -1;
+		if ( ! a[1] && b[1] ) return 1;
+		if ( a[1] && ! b[1] ) return -1;
+		return 0;
+	});
+	return list;
+}
 
 function addSeparators(str) {
 	return `(^|.*?${SEPARATORS})(?:${str})(?=$|${SEPARATORS})`
@@ -46,6 +58,7 @@ function formatTerms(data) {
 
 const ERROR_IMAGE = 'https://static-cdn.jtvnw.net/emoticons/v1/58765/2.0';
 const EMOTE_CHARS = /[ .,!]/;
+const GIF_TERMS = ['gif emotes', 'gif emoticons', 'gifs'];
 
 export default class Chat extends Module {
 	constructor(...args) {
@@ -87,10 +100,27 @@ export default class Chat extends Module {
 		this.rich_providers = {};
 		this.__rich_providers = [];
 
+		this._hl_reasons = {};
+		this.addHighlightReason('mention', 'Mentioned');
+		this.addHighlightReason('user', 'Highlight User');
+		this.addHighlightReason('badge', 'Highlight Badge');
+		this.addHighlightReason('term', 'Highlight Term');
 
 		// ========================================================================
 		// Settings
 		// ========================================================================
+
+		/*this.settings.add('debug.highlight-reason', {
+			default: [],
+			type: 'basic_array_merge',
+			ui: {
+				path: 'Chat > Debugging >> General',
+				title: 'Test',
+				component: 'setting-select-box',
+				multiple: true,
+				data: () => this.getHighlightReasons()
+			}
+		});*/
 
 		this.settings.add('debug.link-resolver.source', {
 			default: null,
@@ -125,13 +155,8 @@ export default class Chat extends Module {
 				title: 'Timestamp Font Size',
 				description: 'How large should timestamps be, in pixels. Defaults to Font Size if not set.',
 				component: 'setting-text-box',
-				process(val) {
-					val = parseInt(val, 10);
-					if ( isNaN(val) || ! isFinite(val) || val <= 0 )
-						return null;
-
-					return val;
-				}
+				process: 'to_int',
+				bounds: [1]
 			}
 		});
 
@@ -142,13 +167,8 @@ export default class Chat extends Module {
 				title: 'Font Size',
 				description: "How large should text in chat be, in pixels. This may be affected by your browser's zoom and font size settings.",
 				component: 'setting-text-box',
-				process(val) {
-					val = parseInt(val, 10);
-					if ( isNaN(val) || ! isFinite(val) || val <= 0 )
-						return 13;
-
-					return val;
-				}
+				process: 'to_int',
+				bounds: [1]
 			}
 		});
 
@@ -188,7 +208,7 @@ export default class Chat extends Module {
 		});
 
 		this.settings.add('chat.rich.hide-tokens', {
-			default: true,
+			default: false,
 			ui: {
 				path: 'Chat > Appearance >> Rich Content',
 				title: 'Hide matching links for rich content.',
@@ -234,14 +254,27 @@ export default class Chat extends Module {
 				title: 'Scrollback Length',
 				description: 'Keep up to this many lines in chat. Setting this too high will create lag.',
 				component: 'setting-text-box',
-				process(val) {
-					val = parseInt(val, 10);
-					if ( isNaN(val) || ! isFinite(val) || val < 1 )
-						val = 150;
-
-					return val;
-				}
+				process: 'to_int',
+				bounds: [1]
 			}
+		});
+
+		this.settings.add('chat.filtering.debug', {
+			default: false,
+			ui: {
+				path: 'Chat > Filtering > General >> Behavior',
+				title: 'Display a list of highlight reasons on every chat message for debugging.',
+				component: 'setting-check-box',
+				force_seen: true
+			}
+		});
+
+		this.settings.addUI('chat.filtering.pad-bottom', {
+			path: 'Chat > Filtering > Highlight',
+			sort: 1000,
+			component: 'setting-spacer',
+			top: '30rem',
+			force_seen: true
 		});
 
 		this.settings.add('chat.filtering.click-to-reveal', {
@@ -392,14 +425,15 @@ export default class Chat extends Module {
 			type: 'array_merge',
 			always_inherit: true,
 			ui: {
-				path: 'Chat > Filtering > Highlight >> Users',
+				path: 'Chat > Filtering > Highlight @{"description": "These settings allow you to highlight messages in chat based on their contents. Setting priorities on rules allows you to determine which highlight color should be applied if a message matches multiple rules. Rules with a higher priority take priority over rules with lower priorities.\\n\\nYou can also create a rule that removes highlights from messages, preventing lower priority rules from highlighting them, by setting a color with an alpha value of zero. Example: `#00000000`"} >> Users',
 				component: 'basic-terms',
 				colored: true,
-				words: false
+				words: false,
+				priority: true
 			}
 		});
 
-		this.settings.add('chat.filtering.highlight-basic-users--color-regex', {
+		this.settings.add('__filter:highlight-users', {
 			requires: ['chat.filtering.highlight-basic-users'],
 			equals: 'requirements',
 			process(ctx) {
@@ -407,12 +441,13 @@ export default class Chat extends Module {
 				if ( ! val || ! val.length )
 					return null;
 
-				const colors = new Map;
+				const temp = new Map;
 
 				for(const item of val) {
-					const c = item.c || null,
+					const p = item.p || 0,
 						t = item.t;
 
+					let c = item.c || null;
 					let v = item.v;
 
 					if ( t === 'glob' )
@@ -430,6 +465,18 @@ export default class Chat extends Module {
 						continue;
 					}
 
+					let colors = temp.get(p);
+					if ( ! colors ) {
+						colors = new Map;
+						temp.set(p, colors);
+					}
+
+					if ( c ) {
+						const test = Color.RGBA.fromCSS(c);
+						if ( ! test || ! test.a )
+							c = false;
+					}
+
 					if ( colors.has(c) )
 						colors.get(c).push(v);
 					else {
@@ -437,11 +484,19 @@ export default class Chat extends Module {
 					}
 				}
 
-				for(const [key, list] of colors) {
-					colors.set(key, new RegExp(`^(?:${list.join('|')})$`, 'gi'));
+				const out = [];
+				for(const [priority, list] of temp) {
+					for(const [color, entries] of list) {
+						out.push([
+							priority,
+							color,
+							new RegExp(`^(?:${entries.join('|')})$`, 'gi')
+						]);
+						//list.set(k, new RegExp(`^(?:${entries.join('|')})$`, 'gi'));
+					}
 				}
 
-				return colors;
+				return sortPriorityColorTerms(out);
 			}
 		});
 
@@ -459,7 +514,7 @@ export default class Chat extends Module {
 		});
 
 
-		this.settings.add('chat.filtering.highlight-basic-users-blocked--regex', {
+		this.settings.add('__filter:block-users', {
 			requires: ['chat.filtering.highlight-basic-users-blocked'],
 			equals: 'requirements',
 			process(ctx) {
@@ -503,12 +558,13 @@ export default class Chat extends Module {
 				path: 'Chat > Filtering > Highlight >> Badges',
 				component: 'badge-highlighting',
 				colored: true,
-				data: () => this.badges.getSettingsBadges()
+				priority: true,
+				data: () => this.badges.getSettingsBadges(true)
 			}
 		});
 
 
-		this.settings.add('chat.filtering.highlight-basic-badges--colors', {
+		this.settings.add('__filter:highlight-badges', {
 			requires: ['chat.filtering.highlight-basic-badges'],
 			equals: 'requirements',
 			process(ctx) {
@@ -516,17 +572,25 @@ export default class Chat extends Module {
 				if ( ! val || ! val.length )
 					return null;
 
-				const colors = new Map;
+				const badges = new Map;
 
 				for(const item of val) {
-					const c = item.c || null,
+					let c = item.c || null;
+					const p = item.p || 0,
 						v = item.v;
 
-					if ( ! colors.has(v) )
-						colors.set(v, c);
+					if ( c ) {
+						const test = Color.RGBA.fromCSS(c);
+						if ( ! test || ! test.a )
+							c = false;
+					}
+
+					const existing = badges.get(v);
+					if ( ! existing || existing[0] < p || (c && ! existing[1] && existing[0] <= p) )
+						badges.set(v, [p, c]);
 				}
 
-				return colors;
+				return badges;
 			}
 		});
 
@@ -539,11 +603,11 @@ export default class Chat extends Module {
 				path: 'Chat > Filtering > Block >> Badges @{"description": "**Note:** This section is for filtering messages out of chat from users with specific badges. If you wish to hide a badge, go to [Chat > Badges >> Visibility](~chat.badges.tabs.visibility)."}',
 				component: 'badge-highlighting',
 				removable: true,
-				data: () => this.badges.getSettingsBadges()
+				data: () => this.badges.getSettingsBadges(true)
 			}
 		});
 
-		this.settings.add('chat.filtering.highlight-basic-badges-blocked--list', {
+		this.settings.add('__filter:block-badges', {
 			requires: ['chat.filtering.highlight-basic-badges-blocked'],
 			equals: 'requirements',
 			process(ctx) {
@@ -572,11 +636,12 @@ export default class Chat extends Module {
 				path: 'Chat > Filtering > Highlight >> Terms @{"description": "Please see [Chat > Filtering > Syntax Help](~) for details on how to use terms."}',
 				component: 'basic-terms',
 				colored: true,
+				priority: true,
 				highlight: true
 			}
 		});
 
-		this.settings.add('chat.filtering.highlight-basic-terms--color-regex', {
+		this.settings.add('__filter:highlight-terms', {
 			requires: ['chat.filtering.highlight-tokens', 'chat.filtering.highlight-basic-terms'],
 			equals: 'requirements',
 			process(ctx) {
@@ -585,17 +650,19 @@ export default class Chat extends Module {
 				if ( ! val || ! val.length )
 					return null;
 
-				const colors = new Map;
+				const temp = new Map;
+				//const colors = new Map;
 				let has_highlight = false,
 					has_non = false;
 
 				for(const item of val) {
-					const c = item.c || null,
+					const p = item.p || 0,
 						highlight = can_highlight && (has(item, 'h') ? item.h : true),
 						sensitive = item.s,
 						t = item.t,
 						word = has(item, 'w') ? item.w : t !== 'raw';
 
+					let c = item.c || null;
 					let v = item.v;
 
 					if ( t === 'glob' )
@@ -617,6 +684,18 @@ export default class Chat extends Module {
 						has_highlight = true;
 					else
 						has_non = true;
+
+					let colors = temp.get(p);
+					if ( ! colors ) {
+						colors = new Map;
+						temp.set(p, colors);
+					}
+
+					if ( c ) {
+						const test = Color.RGBA.fromCSS(c);
+						if ( ! test || ! test.a )
+							c = false;
+					}
 
 					let data = colors.get(c);
 					if ( ! data )
@@ -646,20 +725,36 @@ export default class Chat extends Module {
 					return null;
 
 				const out = {
-					hl: has_highlight ? new Map : null,
-					non: has_non ? new Map : null
+					hl: has_highlight ? [] : null,
+					non: has_non ? [] : null
 				};
 
-				for(const [key, list] of colors) {
-					const highlights = formatTerms(list[0]),
-						non_highlights = formatTerms(list[1]);
+				for(const [priority, colors] of temp) {
+					for(const [color, list] of colors) {
+						const highlights = formatTerms(list[0]),
+							non_highlights = formatTerms(list[1]);
 
-					if ( highlights[0] || highlights[1] )
-						out.hl.set(key, highlights);
+						if ( highlights[0] || highlights[1] )
+							out.hl.push([
+								priority,
+								color,
+								highlights
+							]);
 
-					if ( non_highlights[0] || non_highlights[1] )
-						out.non.set(key, non_highlights);
+						if ( non_highlights[0] || non_highlights[1] )
+							out.non.push([
+								priority,
+								color,
+								non_highlights
+							]);
+					}
 				}
+
+				if ( has_highlight )
+					sortPriorityColorTerms(out.hl);
+
+				if ( has_non )
+					sortPriorityColorTerms(out.non);
 
 				return out;
 			}
@@ -678,7 +773,7 @@ export default class Chat extends Module {
 		});
 
 
-		this.settings.add('chat.filtering.highlight-basic-blocked--regex', {
+		this.settings.add('__filter:block-terms', {
 			requires: ['chat.filtering.highlight-basic-blocked'],
 			equals: 'requirements',
 			process(ctx) {
@@ -686,13 +781,31 @@ export default class Chat extends Module {
 				if ( ! val || ! val.length )
 					return null;
 
-				const out = [
-					[[], []],
-					[[], []]
+				const data = [
+					[ // no-remove
+						[ // sensitive
+							[], [] // word
+						],
+						[ // intensitive
+							[], []
+						]
+					],
+					[ // remove
+						[ // sensitive
+							[], [] // word
+						],
+						[ // intensiitve
+							[], []
+						]
+					]
 				];
+
+				let had_remove = false,
+					had_non = false;
 
 				for(const item of val) {
 					const t = item.t,
+						sensitive = item.s,
 						word = has(item, 'w') ? item.w : t !== 'raw';
 					let v = item.v;
 
@@ -705,15 +818,21 @@ export default class Chat extends Module {
 					if ( ! v || ! v.length )
 						continue;
 
-					out[item.remove ? 1 : 0][word ? 0 : 1].push(v);
+					if ( item.remove )
+						had_remove = true;
+					else
+						had_non = true;
+
+					data[item.remove ? 1 : 0][sensitive ? 0 : 1][word ? 0 : 1].push(v);
 				}
 
-				return out.map(data => {
-					if ( data[0].length )
-						data[1].push(`(^|.*?${SEPARATORS})(?:${data[0].join('|')})(?=$|${SEPARATORS})`);
+				if ( ! had_remove && ! had_non )
+					return null;
 
-					return data[1].length ? new RegExp(data[1].join('|'), 'gi') : null;
-				});
+				return {
+					remove: had_remove ? formatTerms(data[1]) : null,
+					non: had_non ? formatTerms(data[0]) : null
+				};
 			}
 		});
 
@@ -743,6 +862,18 @@ export default class Chat extends Module {
 				component: 'setting-check-box',
 				path: 'Chat > Filtering > General >> Appearance',
 				title: 'Display mentions in chat with a bold font.'
+			}
+		});
+
+		this.settings.add('chat.filtering.mention-priority', {
+			default: 0,
+			ui: {
+				path: 'Chat > Filtering > General >> Appearance',
+				title: 'Mention Priority',
+				component: 'setting-text-box',
+				type: 'number',
+				process: 'to_int',
+				description: 'Mentions of your name have this priority for the purpose of highlighting. See [Chat > Filtering > Highlight](~) for more details.'
 			}
 		});
 
@@ -895,10 +1026,24 @@ export default class Chat extends Module {
 				description: 'Set the minimum contrast ratio used by Luma adjustments when determining readability.',
 
 				component: 'setting-text-box',
+				process: 'to_float'
+			}
+		});
 
-				process(val) {
-					return parseFloat(val)
-				}
+		this.settings.add('chat.me-style', {
+			default: 2,
+			ui: {
+				path: 'Chat > Appearance >> Chat Lines',
+				title: 'Action Style',
+				description: 'When someone uses `/me`, the message will be rendered in this style.',
+				component: 'setting-select-box',
+
+				data: [
+					{value: 0, title: 'No Style'},
+					{value: 1, title: 'Colorized (Old Style)'},
+					{value: 2, title: 'Italic (New Style)'},
+					{value: 3, title: 'Colorized Italic'}
+				]
 			}
 		});
 
@@ -918,9 +1063,62 @@ export default class Chat extends Module {
 			}
 		});
 
+		this.settings.add('chat.emotes.animated', {
+			requires: ['context.bttv.gifs'],
+			default: null,
+			process(ctx, val) {
+				if ( val == null ) {
+					const temp = ctx.get('ffzap.betterttv.gif_emoticons_mode');
+					if ( temp == null )
+						val = ctx.get('context.bttv.gifs') ? 1 : 0;
+					else
+						val = temp === 2 ? 1 : 0;
+				}
+				return val;
+			},
+			ui: {
+				path: 'Chat > Appearance >> Emotes',
+				sort: -50,
+				title: 'Animated Emotes',
+
+				default(ctx) {
+					const temp = ctx.get('ffzap.betterttv.gif_emoticons_mode');
+					if ( temp == null )
+						return ctx.get('context.bttv.gifs') ? 1 : 0;
+					return temp === 2 ? 1 : 0;
+				},
+
+				getExtraTerms: () => GIF_TERMS,
+
+				description: 'This controls whether or not animated emotes are allowed to play in chat. When this is `Disabled`, emotes will appear as static images. Setting this to `Enable on Hover` may cause performance issues.',
+				component: 'setting-select-box',
+				data: [
+					{value: 0, title: 'Disabled'},
+					{value: 1, title: 'Enabled'},
+					{value: 2, title: 'Enable on Hover'}
+				]
+			}
+		});
+
+		this.settings.add('tooltip.emote-images.animated', {
+			requires: ['chat.emotes.animated'],
+			default: null,
+			process(ctx, val) {
+				if ( val == null )
+					val = ctx.get('chat.emotes.animated') ? true : false;
+				return val;
+			},
+			ui: {
+				path: 'Chat > Tooltips >> Emotes',
+				title: 'Display animated images of emotes.',
+				getExtraTerms: () => GIF_TERMS,
+				description: 'If this is not overridden, animated images are only shown in emote tool-tips if [Chat > Appearance >> Emotes > Animated Emotes](~chat.appearance.emotes) is not disabled.',
+				component: 'setting-check-box'
+			}
+		});
+
 		this.settings.add('chat.bits.animated', {
 			default: true,
-
 			ui: {
 				path: 'Chat > Bits and Cheering >> Appearance',
 				title: 'Display animated cheers.',
@@ -1280,6 +1478,43 @@ export default class Chat extends Module {
 	}
 
 
+	applyHighlight(msg, priority, color, reason, use_null_color = false) { // eslint-disable-line class-methods-use-this
+		if ( ! msg )
+			return msg;
+
+		const is_null = msg.mention_priority == null,
+			matched = is_null || priority >= msg.mention_priority,
+			higher = is_null || priority > msg.mention_priority;
+
+		if ( msg.filters )
+			msg.filters.push(`${reason}(${priority})${matched && color === false ? ':remove' : color ? `:${color}` : ''}`);
+
+		if ( matched ) {
+			msg.mention_priority = priority;
+
+			if ( color === false ) {
+				if ( higher ) {
+					msg.mentioned = false;
+					msg.clear_priority = priority;
+					msg.mention_color = msg.highlights = null;
+				}
+
+				return;
+			}
+
+			msg.mentioned = true;
+			if ( ! msg.highlights )
+				msg.highlights = new Set;
+		}
+
+		if ( msg.mentioned && (msg.clear_priority == null || priority >= msg.clear_priority) ) {
+			msg.highlights.add(reason);
+			if ( (color || use_null_color) && (higher || ! msg.mention_color) )
+				msg.mention_color = color;
+		}
+	}
+
+
 	standardizeMessage(msg) { // eslint-disable-line class-methods-use-this
 		if ( ! msg )
 			return msg;
@@ -1342,6 +1577,9 @@ export default class Chat extends Module {
 		// Standardize Deletion
 		if ( msg.deletedAt !== undefined )
 			msg.deleted = !!msg.deletedAt;
+
+		// Addon Badges
+		msg.ffz_badges = this.badges.getBadges(user.id, user.login, msg.roomID, msg.roomLogin);
 
 		return msg;
 	}
@@ -1442,7 +1680,7 @@ export default class Chat extends Module {
 
 		for(let i=0; i < l; i++) {
 			const part = parts[i],
-				content = part.content;
+				content = part.ffz_content ?? part.content;
 
 			if ( ! content )
 				continue;
@@ -1518,6 +1756,28 @@ export default class Chat extends Module {
 	}
 
 
+	addHighlightReason(key, data) {
+		if ( typeof key === 'object' && key.key ) {
+			data = key;
+			key = data.key;
+
+		} else if ( typeof data === 'string' )
+			data = {title: data};
+
+		data.value = data.key = key;
+		if ( ! data.i18n_key )
+			data.i18n_key = `hl-reason.${key}`;
+
+		if ( this._hl_reasons[key] )
+			throw new Error(`Highlight Reason already exists with key ${key}`);
+
+		this._hl_reasons[key] = data;
+	}
+
+	getHighlightReasons() {
+		return Object.values(this._hl_reasons);
+	}
+
 	addTokenizer(tokenizer) {
 		const type = tokenizer.type;
 		this.tokenizers[type] = tokenizer;
@@ -1570,19 +1830,22 @@ export default class Chat extends Module {
 		if ( ! this.context.get('chat.rich.enabled') || this.context.get('chat.rich.minimum-level') > this.getUserLevel(msg) )
 			return;
 
+		if ( ! Array.isArray(tokens) )
+			return;
+
 		const providers = this.__rich_providers;
 
 		for(const token of tokens) {
 			for(const provider of providers)
 				if ( provider.test.call(this, token, msg) ) {
-					token.hidden = this.context.get('chat.rich.hide-tokens') && provider.hide_token;
+					token.hidden = provider.can_hide_token && (this.context.get('chat.rich.hide-tokens') || provider.hide_token);
 					return provider.process.call(this, token);
 				}
 		}
 	}
 
 
-	tokenizeMessage(msg, user) {
+	tokenizeMessage(msg, user, haltable = false) {
 		if ( msg.content && ! msg.message )
 			msg.message = msg.content.text;
 
@@ -1594,10 +1857,15 @@ export default class Chat extends Module {
 
 		let tokens = [{type: 'text', text: msg.message}];
 
-		for(const tokenizer of this.__tokenizers)
-			tokens = tokenizer.process.call(this, tokens, msg, user);
+		for(const tokenizer of this.__tokenizers) {
+			tokens = tokenizer.process.call(this, tokens, msg, user, haltable);
+			if ( haltable && msg.ffz_halt_tokens ) {
+				msg.ffz_halt_tokens = undefined;
+				break;
+			}
+		}
 
-		return tokens;
+		return tokens || [];
 	}
 
 

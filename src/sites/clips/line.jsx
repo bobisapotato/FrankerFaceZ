@@ -33,7 +33,10 @@ export default class Line extends Module {
 	}
 
 	onEnable() {
+		this.chat.context.on('changed:chat.me-style', this.updateLines, this);
+		this.chat.context.on('changed:chat.emotes.enabled', this.updateLines, this);
 		this.chat.context.on('changed:chat.emotes.2x', this.updateLines, this);
+		this.chat.context.on('changed:chat.emotes.animated', this.updateLines, this);
 		this.chat.context.on('changed:chat.emoji.style', this.updateLines, this);
 		this.chat.context.on('changed:chat.bits.stack', this.updateLines, this);
 		this.chat.context.on('changed:chat.badges.style', this.updateLines, this);
@@ -64,7 +67,11 @@ export default class Line extends Module {
 
 
 					const msg = t.standardizeMessage(this.props.node, this.props.video),
+						anim_hover = t.chat.context.get('chat.emotes.animated') === 2,
 						is_action = msg.is_action,
+						action_style = is_action ? t.chat.context.get('chat.me-style') : 0,
+						action_italic = action_style >= 2,
+						action_color = action_style === 1 || action_style === 3,
 						user = msg.user,
 						color = t.parent.colors.process(user.color),
 
@@ -72,31 +79,35 @@ export default class Line extends Module {
 
 					const tokens = msg.ffz_tokens = msg.ffz_tokens || t.chat.tokenizeMessage(msg, u);
 
-					return (<div
-						data-a-target="tw-animation-target"
-						class="ffz--clip-chat-line tw-animation tw-animation--animate tw-animation--duration-short tw-animation--fill-mode-both tw-animation--slide-in-bottom tw-animation--timing-ease"
-						data-room-id={msg.roomID}
-						data-room={msg.roomLogin}
-						data-user-id={user.id}
-						data-user={user.login}
-					>
-						<span class="chat-line__message--badges">{
-							t.chat.badges.render(msg, createElement)
-						}</span>
-						<a
-							class="clip-chat__message-author tw-font-size-5 tw-strong tw-link notranslate"
-							href={`https://www.twitch.tv/${user.login}/clips`}
-							style={{color}}
+					return (<div class="tw-mg-b-1" style={{marginBottom:'0 !important'}}>
+						<div
+							data-a-target="tw-animation-target"
+							class="ffz--clip-chat-line tw-animation tw-animation--animate tw-animation--duration-short tw-animation--fill-mode-both tw-animation--slide-in-bottom tw-animation--timing-ease"
+							data-room-id={msg.roomID}
+							data-room={msg.roomLogin}
+							data-user-id={user.id}
+							data-user={user.login}
+							onMouseOver={anim_hover ? t.chat.emotes.animHover : null}
+							onMouseOut={anim_hover ? t.chat.emotes.animLeave : null}
 						>
-							<span class="chat-author__display_name">{ user.displayName }</span>
-							{user.isIntl && <span class="chat-author__intl-login"> ({user.login}) </span>}
-						</a>
-						<div class="tw-inline-block tw-mg-r-05">{
-							is_action ? '' : ':'
-						}</div>
-						<span class="message" style={{color: is_action ? color : null}}>{
-							t.chat.renderTokens(tokens, createElement)
-						}</span>
+							<span class="chat-line__message--badges">{
+								t.chat.badges.render(msg, createElement)
+							}</span>
+							<a
+								class="clip-chat__message-author tw-font-size-5 ffz-link notranslate"
+								href={`https://www.twitch.tv/${user.login}/clips`}
+								style={{color}}
+							>
+								<span class="tw-strong chat-author__display_name">{ user.displayName }</span>
+								{user.isIntl && <span class="chat-author__intl-login"> ({user.login}) </span>}
+							</a>
+							<div class="tw-inline-block tw-mg-r-05">{
+								is_action ? '' : ':'
+							}</div>
+							<span class={`message${action_italic ? ' chat-line__message-body--italicized' : ''}`} style={{color: action_color ? color : null}}>{
+								t.chat.renderTokens(tokens, createElement)
+							}</span>
+						</div>
 					</div>);
 
 				} catch(err) {
@@ -169,6 +180,7 @@ export default class Line extends Module {
 			roomLogin: room && room.login,
 			roomID: room && room.id,
 			badges,
+			ffz_badges: this.chat.badges.getBadges(author.id, author.login, room?.id, room?.login),
 			messageParts: msg.message.fragments
 		};
 

@@ -12,6 +12,9 @@ import {NEW_API, API_SERVER, IS_OSX, EmoteTypes, TWITCH_GLOBAL_SETS, TWITCH_POIN
 import GET_EMOTE from './emote_info.gql';
 import GET_EMOTE_SET from './emote_set_info.gql';
 
+const HoverRAF = Symbol('FFZ:Hover:RAF');
+const HoverState = Symbol('FFZ:Hover:State');
+
 const MOD_KEY = IS_OSX ? 'metaKey' : 'ctrlKey';
 
 const MODIFIERS = {
@@ -83,6 +86,23 @@ export default class Emotes extends Module {
 		this._set_refs = {};
 		this._set_timers = {};
 
+		this.settings.add('chat.emotes.enabled', {
+			default: 2,
+			ui: {
+				path: 'Chat > Appearance >> Emotes',
+				title: 'Display Emotes',
+				sort: -100,
+				force_seen: true,
+				description: 'If you do not wish to see emotes, you can disable them here.',
+				component: 'setting-select-box',
+				data: [
+					{value: 0, title: 'Disabled'},
+					{value: 1, title: 'Twitch Only'},
+					{value: 2, title: 'Enabled'}
+				]
+			}
+		});
+
 		this.settings.add('chat.emotes.2x', {
 			default: false,
 			ui: {
@@ -133,6 +153,8 @@ export default class Emotes extends Module {
 
 		// Because this may be used elsewhere.
 		this.handleClick = this.handleClick.bind(this);
+		this.animHover = this.animHover.bind(this);
+		this.animLeave = this.animLeave.bind(this);
 	}
 
 	onEnable() {
@@ -246,6 +268,68 @@ export default class Emotes extends Module {
 			this.settings.provider.delete(key);
 		else
 			this.settings.provider.set(key, list);
+	}
+
+
+	// ========================================================================
+	// Animation Hover
+	// ========================================================================
+
+	animHover(event) { // eslint-disable-line class-methods-use-this
+		const target = event.currentTarget;
+		if ( target[HoverState] )
+			return;
+
+		if ( target[HoverRAF] )
+			cancelAnimationFrame(target[HoverRAF]);
+
+		target[HoverRAF] = requestAnimationFrame(() => {
+			target[HoverRAF] = null;
+			if ( target[HoverState] )
+				return;
+
+			if ( ! target.matches(':hover') )
+				return;
+
+			target[HoverState] = true;
+			const emotes = target.querySelectorAll('.ffz-hover-emote');
+			for(const em of emotes) {
+				const ds = em.dataset;
+				if ( ds.normalSrc && ds.hoverSrc ) {
+					em.src = ds.hoverSrc;
+					em.srcset = ds.hoverSrcSet;
+				}
+			}
+		});
+	}
+
+
+	animLeave(event) { // eslint-disable-line class-methods-use-this
+		const target = event.currentTarget;
+		if ( ! target[HoverState] )
+			return;
+
+		if ( target[HoverRAF] )
+			cancelAnimationFrame(target[HoverRAF]);
+
+		target[HoverRAF] = requestAnimationFrame(() => {
+			target[HoverRAF] = null;
+			if ( ! target[HoverState] )
+				return;
+
+			if ( target.matches(':hover') )
+				return;
+
+			target[HoverState] = false;
+			const emotes = target.querySelectorAll('.ffz-hover-emote');
+			for(const em of emotes) {
+				const ds = em.dataset;
+				if ( ds.normalSrc ) {
+					em.src = ds.normalSrc;
+					em.srcset = ds.normalSrcSet;
+				}
+			}
+		});
 	}
 
 
@@ -439,9 +523,9 @@ export default class Emotes extends Module {
 			room_user = room && room.getUser(user_id, user_login, true),
 			user = this.parent.getUser(user_id, user_login, true);
 
-		return (user ? user.emote_sets._cache : []).concat(
-			room_user ? room_user.emote_sets._cache : [],
-			room ? room.emote_sets._cache : [],
+		return (user?.emote_sets ? user.emote_sets._cache : []).concat(
+			room_user?.emote_sets ? room_user.emote_sets._cache : [],
+			room?.emote_sets ? room.emote_sets._cache : [],
 			this.default_sets._cache
 		);
 	}
@@ -452,7 +536,7 @@ export default class Emotes extends Module {
 	}
 
 	_withSources(out, seen, emote_sets) { // eslint-disable-line class-methods-use-this
-		if ( ! emote_sets._sources )
+		if ( ! emote_sets?._sources )
 			return;
 
 		for(const [provider, data] of emote_sets._sources)
@@ -493,8 +577,11 @@ export default class Emotes extends Module {
 		if ( ! room )
 			return [];
 
-		if ( ! room_user )
-			return room.emote_sets._cache;
+		if ( ! room_user?.emote_sets )
+			return room.emote_sets ? room.emote_sets._cache : [];
+
+		else if ( ! room.emote_sets )
+			return room_user.emote_sets._cache;
 
 		return room_user.emote_sets._cache.concat(room.emote_sets._cache);
 	}
@@ -522,7 +609,7 @@ export default class Emotes extends Module {
 
 	getGlobalSetIDs(user_id, user_login) {
 		const user = this.parent.getUser(user_id, user_login, true);
-		if ( ! user )
+		if ( ! user?.emote_sets )
 			return this.default_sets._cache;
 
 		return user.emote_sets._cache.concat(this.default_sets._cache);
@@ -724,6 +811,7 @@ export default class Emotes extends Module {
 			}
 
 			emote.set_id = set_id;
+			emote.src = emote.urls[1];
 			emote.srcSet = `${emote.urls[1]} 1x`;
 			if ( emote.urls[2] )
 				emote.srcSet += `, ${emote.urls[2]} 2x`;
@@ -738,16 +826,35 @@ export default class Emotes extends Module {
 					emote.srcSet2 += `, ${emote.urls[4]} 2x`;
 			}
 
+			if ( emote.animated?.[1] ) {
+				emote.animSrc = emote.animated[1];
+				emote.animSrcSet = `${emote.animated[1]} 1x`;
+				if ( emote.animated[2] ) {
+					emote.animSrcSet += `, ${emote.animated[2]} 2x`;
+					emote.animSrc2 = emote.animated[2];
+					emote.animSrcSet2 = `${emote.animated[2]} 1x`;
+
+					if ( emote.animated[4] ) {
+						emote.animSrcSet += `, ${emote.animated[4]} 4x`;
+						emote.animSrcSet2 += `, ${emote.animated[4]} 2x`;
+					}
+				}
+			}
+
 			emote.token = {
 				type: 'emote',
 				id: emote.id,
 				set: set_id,
 				provider: 'ffz',
-				src: emote.urls[1],
+				src: emote.src,
 				srcSet: emote.srcSet,
 				can_big: !! emote.urls[2],
 				src2: emote.src2,
 				srcSet2: emote.srcSet2,
+				animSrc: emote.animSrc,
+				animSrcSet: emote.animSrcSet,
+				animSrc2: emote.animSrc2,
+				animSrcSet2: emote.animSrcSet2,
 				text: emote.hidden ? '???' : emote.name,
 				length: emote.name.length,
 				height: emote.height

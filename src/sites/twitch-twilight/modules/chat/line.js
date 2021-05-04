@@ -60,7 +60,10 @@ export default class ChatLine extends Module {
 		this.on('chat:update-lines', this.updateLines, this);
 		this.on('i18n:update', this.updateLines, this);
 
+		this.chat.context.on('changed:chat.me-style', this.updateLines, this);
+		this.chat.context.on('changed:chat.emotes.enabled', this.updateLines, this);
 		this.chat.context.on('changed:chat.emotes.2x', this.updateLines, this);
+		this.chat.context.on('changed:chat.emotes.animated', this.updateLines, this);
 		this.chat.context.on('changed:chat.emoji.style', this.updateLines, this);
 		this.chat.context.on('changed:chat.bits.stack', this.updateLines, this);
 		this.chat.context.on('changed:chat.badges.style', this.updateLines, this);
@@ -79,12 +82,14 @@ export default class ChatLine extends Module {
 		this.chat.context.on('changed:chat.filtering.show-deleted', this.updateLines, this);
 		this.chat.context.on('changed:chat.filtering.process-own', this.updateLines, this);
 		this.chat.context.on('changed:chat.timestamp-format', this.updateLines, this);
-		this.chat.context.on('changed:chat.filtering.highlight-basic-terms--color-regex', this.updateLines, this);
-		this.chat.context.on('changed:chat.filtering.highlight-basic-users--color-regex', this.updateLines, this);
-		this.chat.context.on('changed:chat.filtering.highlight-basic-badges--colors', this.updateLines, this);
-		this.chat.context.on('changed:chat.filtering.highlight-basic-blocked--regex', this.updateLines, this);
-		this.chat.context.on('changed:chat.filtering.highlight-basic-users-blocked--regex', this.updateLines, this);
-		this.chat.context.on('changed:chat.filtering.highlight-basic-badges-blocked--list', this.updateLines, this);
+		this.chat.context.on('changed:chat.filtering.mention-priority', this.updateLines, this);
+		this.chat.context.on('changed:chat.filtering.debug', this.updateLines, this);
+		this.chat.context.on('changed:__filter:highlight-terms', this.updateLines, this);
+		this.chat.context.on('changed:__filter:highlight-users', this.updateLines, this);
+		this.chat.context.on('changed:__filter:highlight-badges', this.updateLines, this);
+		this.chat.context.on('changed:__filter:block-terms', this.updateLines, this);
+		this.chat.context.on('changed:__filter:block-users', this.updateLines, this);
+		this.chat.context.on('changed:__filter:block-badges', this.updateLines, this);
 
 		this.on('chat:get-tab-commands', e => {
 			if ( this.experiments.getTwitchAssignmentByName('chat_replies') === 'control' )
@@ -187,11 +192,14 @@ export default class ChatLine extends Module {
 					const msg = t.chat.standardizeWhisper(this.props.message),
 
 						is_action = msg.is_action,
+						action_style = is_action ? t.chat.context.get('chat.me-style') : 0,
+						action_italic = action_style >= 2,
+						action_color = action_style === 1 || action_style === 3,
 						user = msg.user,
 						raw_color = t.overrides.getColor(user.id) || user.color,
 						color = t.parent.colors.process(raw_color),
 
-						tokens = msg.ffz_tokens = msg.ffz_tokens || t.chat.tokenizeMessage(msg, null, null),
+						tokens = msg.ffz_tokens = msg.ffz_tokens || t.chat.tokenizeMessage(msg, null),
 						contents = t.chat.renderTokens(tokens, e),
 
 						override_name = t.overrides.getName(user.id);
@@ -206,9 +214,9 @@ export default class ChatLine extends Module {
 							}, override_name || user.displayName),
 							e('span', null, is_action ? ' ' : ': '),
 							e('span', {
-								className: 'message',
+								className: `message${action_italic ? ' chat-line__message-body--italicized' : ''}`,
 								style: {
-									color: is_action && color
+									color: action_color && color
 								}
 							}, contents)
 						])
@@ -337,11 +345,15 @@ export default class ChatLine extends Module {
 				const types = t.parent.message_types || {},
 					deleted_count = this.props.deletedCount,
 					reply_mode = t.chat.context.get('chat.replies.style'),
+					anim_hover = t.chat.context.get('chat.emotes.animated') === 2,
 					override_mode = t.chat.context.get('chat.filtering.display-deleted'),
 
 					msg = t.chat.standardizeMessage(this.props.message),
 					reply_tokens = (reply_mode === 2 || (reply_mode === 1 && this.props.repliesAppearancePreference && this.props.repliesAppearancePreference !== 'expanded')) ? ( msg.ffz_reply = msg.ffz_reply || t.chat.tokenizeReply(this.props.reply) ) : null,
 					is_action = msg.messageType === types.Action,
+					action_style = is_action ? t.chat.context.get('chat.me-style') : 0,
+					action_italic = action_style >= 2,
+					action_color = action_style === 1 || action_style === 3,
 
 					user = msg.user,
 					raw_color = t.overrides.getColor(user.id) || user.color,
@@ -428,7 +440,7 @@ other {# messages were deleted by a moderator.}
 				}
 
 				if ( ! room_id && room ) {
-					const r = t.chat.getRoom(null, room_id, true);
+					const r = t.chat.getRoom(null, room, true);
 					if ( r && r.id )
 						room_id = msg.roomId = r.id;
 				}
@@ -450,7 +462,7 @@ other {# messages were deleted by a moderator.}
 					u.can_reply = reply_mode === 2 && can_reply;
 				}
 
-				const tokens = msg.ffz_tokens = msg.ffz_tokens || t.chat.tokenizeMessage(msg, u, r),
+				const tokens = msg.ffz_tokens = msg.ffz_tokens || t.chat.tokenizeMessage(msg, u),
 					rich_content = FFZRichContent && t.chat.pluckRichContent(tokens, msg),
 					bg_css = msg.mentioned && msg.mention_color ? t.parent.inverse_colors.process(msg.mention_color) : null;
 
@@ -525,7 +537,8 @@ other {# messages were deleted by a moderator.}
 					] : user_block)
 				];
 
-				let cls = `chat-line__message${show_class ? ' ffz--deleted-message' : ''}${twitch_clickable ? ' tw-relative' : ''}`,
+				let extra_ts,
+					cls = `chat-line__message${show_class ? ' ffz--deleted-message' : ''}${twitch_clickable ? ' tw-relative' : ''}`,
 					out = (tokens.length || ! msg.ffz_type) ? [
 						(this.props.showTimestamps || this.props.isHistorical) && e('span', {
 							className: 'chat-line__timestamp'
@@ -539,8 +552,8 @@ other {# messages were deleted by a moderator.}
 							: null,
 						show ?
 							e('span', {
-								className:`message ${twitch_highlight ? 'chat-line__message-body--highlighted' : ''}`,
-								style: is_action ? { color } : null
+								className:`message ${action_italic ? 'chat-line__message-body--italicized' : ''} ${twitch_highlight ? 'chat-line__message-body--highlighted' : ''}`,
+								style: action_color ? { color } : null
 							}, t.chat.renderTokens(tokens, e, (reply_mode !== 0 && has_replies) ? this.props.reply : null))
 							:
 							e('span', {
@@ -567,6 +580,9 @@ other {# messages were deleted by a moderator.}
 							}
 						}, JSON.stringify([tokens, msg.emotes], null, 2))*/
 					] : null;
+
+				if ( out == null )
+					extra_ts = t.chat.context.get('chat.extra-timestamps');
 
 				if ( msg.ffz_type === 'sub_mystery' ) {
 					const mystery = msg.mystery;
@@ -638,6 +654,9 @@ other {# messages were deleted by a moderator.}
 									className: `ffz-i-star${msg.sub_anon ? '-empty' : ''} tw-mg-r-05`
 								}),
 							e('div', null, [
+								out ? null : extra_ts && (this.props.showTimestamps || this.props.isHistorical) && e('span', {
+									className: 'chat-line__timestamp'
+								}, t.chat.formatTime(msg.timestamp)),
 								(out || msg.sub_anon) ? null : t.actions.renderInline(msg, this.props.showModerationIcons, u, r, e),
 								sub_msg
 							]),
@@ -708,6 +727,9 @@ other {# messages were deleted by a moderator.}
 									className: 'ffz-i-star tw-mg-r-05'
 								}),
 							e('div', null, [
+								out ? null : extra_ts && (this.props.showTimestamps || this.props.isHistorical) && e('span', {
+									className: 'chat-line__timestamp'
+								}, t.chat.formatTime(msg.timestamp)),
 								(out || msg.sub_anon) ? null : t.actions.renderInline(msg, this.props.showModerationIcons, u, r, e),
 								sub_msg
 							])
@@ -770,6 +792,9 @@ other {# messages were deleted by a moderator.}
 										className: `ffz-i-${plan.prime ? 'crown' : 'star'} tw-mg-r-05`
 									}),
 								e('div', null, [
+									out ? null : extra_ts && (this.props.showTimestamps || this.props.isHistorical) && e('span', {
+										className: 'chat-line__timestamp'
+									}, t.chat.formatTime(msg.timestamp)),
 									out ? null : t.actions.renderInline(msg, this.props.showModerationIcons, u, r, e),
 									sub_msg
 								])
@@ -802,6 +827,9 @@ other {# messages were deleted by a moderator.}
 					if ( system_msg ) {
 						cls = `ffz-notice-line user-notice-line tw-pd-y-05 tw-pd-r-2 ffz--ritual-line${show_class ? ' ffz--deleted-message' : ''}${twitch_clickable ? ' tw-relative' : ''}`;
 						out = [
+							out ? null : extra_ts && (this.props.showTimestamps || this.props.isHistorical) && e('span', {
+								className: 'chat-line__timestamp'
+							}, t.chat.formatTime(msg.timestamp)),
 							system_msg,
 							out && e('div', {
 								className: 'chat-line--inline chat-line__message',
@@ -823,6 +851,9 @@ other {# messages were deleted by a moderator.}
 					cls = `ffz-notice-line ffz--points-line tw-pd-l-1 tw-pd-y-05 tw-pd-r-2${ffz_highlight ? ' ffz-custom-color ffz--points-highlight' : ''}${show_class ? ' ffz--deleted-message' : ''}${twitch_clickable ? ' tw-relative' : ''}`;
 					out = [
 						e('div', {className: 'tw-c-text-alt-2'}, [
+							out ? null : extra_ts && (this.props.showTimestamps || this.props.isHistorical) && e('span', {
+								className: 'chat-line__timestamp'
+							}, t.chat.formatTime(msg.timestamp)),
 							out ? null : t.actions.renderInline(msg, this.props.showModerationIcons, u, r, e),
 							out ?
 								t.i18n.tList('chat.points.redeemed', 'Redeemed {reward} {cost}', {reward, cost}) :
@@ -892,6 +923,8 @@ other {# messages were deleted by a moderator.}
 					'data-room': room,
 					'data-user-id': user.userID,
 					'data-user': user.userLogin && user.userLogin.toLowerCase(),
+					onMouseOver: anim_hover ? t.chat.emotes.animHover : null,
+					onMouseOut: anim_hover ? t.chat.emotes.animLeave : null
 				}, out);
 
 			} catch(err) {
@@ -942,7 +975,7 @@ other {# messages were deleted by a moderator.}
 				const u = t.site.getUser(),
 					r = {id: this.props.channelID, login: room},
 
-					tokens = msg.ffz_tokens = msg.ffz_tokens || t.chat.tokenizeMessage(msg, u, r),
+					tokens = msg.ffz_tokens = msg.ffz_tokens || t.chat.tokenizeMessage(msg, u),
 					rich_content = FFZRichContent && t.chat.pluckRichContent(tokens, msg),
 					bg_css = msg.mentioned && msg.mention_color ? t.parent.inverse_colors.process(msg.mention_color) : null;
 
@@ -1001,7 +1034,8 @@ other {# messages were deleted by a moderator.}
 				user = msg?.user;
 			if ( user && ((id && id == user.id) || (login && login == user.login)) ) {
 				msg.ffz_tokens = null;
-				msg.highlights = msg.mentioned = msg.mention_color = null;
+				msg.ffz_badges = null;
+				msg.highlights = msg.mentioned = msg.mention_color = msg.color_priority = null;
 				inst.forceUpdate();
 			}
 		}
@@ -1027,7 +1061,8 @@ other {# messages were deleted by a moderator.}
 			const msg = inst.props.message;
 			if ( msg ) {
 				msg.ffz_tokens = null;
-				msg.highlights = msg.mentioned = msg.mention_color = null;
+				msg.ffz_badges = null;
+				msg.highlights = msg.mentioned = msg.mention_color = msg.mention_priority = msg.clear_priority = null;
 			}
 		}
 
@@ -1035,7 +1070,8 @@ other {# messages were deleted by a moderator.}
 			const msg = inst.props.message;
 			if ( msg ) {
 				msg.ffz_tokens = null;
-				msg.highlights = msg.mentioned = msg.mention_color = null;
+				msg.ffz_badges = null;
+				msg.highlights = msg.mentioned = msg.mention_color = msg.mention_priority = msg.clear_priority = null;
 			}
 		}
 
